@@ -14,6 +14,10 @@ pub type Matrix3 = [[f64; 3]; 3];
 const MAX_FILE: u64 = 64 * 1024 * 1024;
 const MAX_CELLS: usize = 1_048_576;
 
+#[path = "embedded_profile.rs"]
+mod embedded;
+pub use embedded::read as read_embedded;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Encoding {
     Linear,
@@ -186,6 +190,8 @@ pub fn hsv_to_rgb(hsv: [f32; 3]) -> [f32; 3] {
 pub struct ToneCurve {
     pub points: Vec<[f32; 2]>,
     tangents: Vec<f32>,
+    clamp_segment: bool,
+    linear: bool,
 }
 impl ToneCurve {
     /// A monotone cubic interpolant avoids overshoot between profile knots.
@@ -225,7 +231,68 @@ impl ToneCurve {
                 tangents[i] = (w1 + w2) / (w1 / a + w2 / b);
             }
         }
-        Ok(Self { points, tangents })
+        Ok(Self {
+            points,
+            tangents,
+            clamp_segment: true,
+            linear: false,
+        })
+    }
+    pub fn from_samples(samples: &[f32]) -> Result<Self> {
+        ensure!(samples.len() >= 2, "色调曲线采样不足");
+        let last = (samples.len() - 1) as f32;
+        let mut curve = Self::new(
+            samples
+                .iter()
+                .enumerate()
+                .map(|(i, v)| [i as f32 / last, *v])
+                .collect(),
+        )?;
+        curve.linear = true;
+        Ok(curve)
+    }
+    /// Natural C2 cubic with zero endpoint curvature, as specified by Adobe's
+    /// public DNG spline solver. Preserve its shape rather than forcing PCHIP.
+    pub fn adobe(points: Vec<[f32; 2]>) -> Result<Self> {
+        let mut curve = Self::new(points)?;
+        let n = curve.points.len();
+        let h: Vec<f64> = curve
+            .points
+            .windows(2)
+            .map(|p| f64::from(p[1][0] - p[0][0]))
+            .collect();
+        let slopes: Vec<f64> = curve
+            .points
+            .windows(2)
+            .zip(&h)
+            .map(|(p, h)| f64::from(p[1][1] - p[0][1]) / h)
+            .collect();
+        let mut upper = vec![0.; n];
+        let mut rhs = vec![0.; n];
+        upper[0] = 0.5;
+        rhs[0] = 1.5 * slopes[0];
+        for i in 1..n {
+            let (lower, next, value) = if i == n - 1 {
+                (0.5, 0., 1.5 * slopes[n - 2])
+            } else {
+                let sum = h[i - 1] + h[i];
+                (
+                    h[i] / (2. * sum),
+                    h[i - 1] / (2. * sum),
+                    1.5 * (h[i] * slopes[i - 1] + h[i - 1] * slopes[i]) / sum,
+                )
+            };
+            let diagonal = 1. - lower * upper[i - 1];
+            upper[i] = next / diagonal;
+            rhs[i] = (value - lower * rhs[i - 1]) / diagonal;
+        }
+        for i in (0..n - 1).rev() {
+            rhs[i] -= upper[i] * rhs[i + 1];
+        }
+        ensure!(rhs.iter().all(|v| v.is_finite()), "DCP 自然样条数值无效");
+        curve.tangents = rhs.into_iter().map(|v| v as f32).collect();
+        curve.clamp_segment = false;
+        Ok(curve)
     }
     pub fn eval(&self, x: f32) -> f32 {
         if !x.is_finite() || x <= self.points[0][0] {
@@ -240,16 +307,24 @@ impl ToneCurve {
         let [x1, y1] = self.points[i + 1];
         let h = x1 - x0;
         let t = (x - x0) / h;
+        if self.linear {
+            return y0 + (y1 - y0) * t;
+        }
         let y = (2. * t * t * t - 3. * t * t + 1.) * y0
             + (t * t * t - 2. * t * t + t) * h * self.tangents[i]
             + (-2. * t * t * t + 3. * t * t) * y1
             + (t * t * t - t * t) * h * self.tangents[i + 1];
-        y.clamp(y0, y1)
+        if self.clamp_segment {
+            y.clamp(y0, y1)
+        } else {
+            y.clamp(0., 1.)
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Profile {
+    pub embedded: bool,
     pub name: String,
     pub model: Option<String>,
     pub color: [Matrix3; 2],
@@ -262,6 +337,8 @@ pub struct Profile {
     pub profile_calibration_signature: Option<String>,
     pub hue_sat: [Option<HsvMap>; 2],
     pub look: Option<HsvMap>,
+    pub extra_look: Option<HsvMap>,
+    pub enhanced_tone: Option<ToneCurve>,
     pub tone: Option<ToneCurve>,
     pub baseline_exposure: f32,
     pub black_render: Option<u32>,
@@ -571,7 +648,7 @@ pub fn parse(bytes: &[u8]) -> Result<Profile> {
     );
     let tone = if let Some(points) = r.numbers(50940, 131072)? {
         ensure!(points.len() % 2 == 0, "DCP 色调曲线坐标不成对");
-        Some(ToneCurve::new(
+        Some(ToneCurve::adobe(
             points
                 .chunks_exact(2)
                 .map(|v| [v[0] as f32, v[1] as f32])
@@ -596,6 +673,7 @@ pub fn parse(bytes: &[u8]) -> Result<Profile> {
         (h ^ *b as u64).wrapping_mul(0x100000001b3)
     });
     Ok(Profile {
+        embedded: false,
         name: r
             .text(50936)?
             .filter(|s| !s.is_empty())
@@ -611,6 +689,8 @@ pub fn parse(bytes: &[u8]) -> Result<Profile> {
         profile_calibration_signature: r.text(50932)?,
         hue_sat,
         look,
+        extra_look: None,
+        enhanced_tone: None,
         tone,
         baseline_exposure: baseline as f32,
         black_render,
@@ -693,6 +773,48 @@ fn roots() -> Vec<PathBuf> {
         ));
     }
     roots
+}
+pub fn installed_names(model: &str) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    if model.is_empty() || model.contains(['/', '\\', ':']) {
+        return Vec::new();
+    }
+    for root in roots() {
+        let mut dirs = vec![
+            root.clone(),
+            root.join("Adobe Standard"),
+            root.join("Camera").join(model),
+        ];
+        if let Ok(entries) = fs::read_dir(root.join("Camera")) {
+            for e in entries.take(4096).flatten() {
+                if e.file_type().is_ok_and(|t| t.is_dir() && !t.is_symlink())
+                    && model_matches(&e.file_name().to_string_lossy(), model)
+                {
+                    dirs.push(e.path());
+                }
+            }
+        }
+        for dir in dirs {
+            if let Ok(entries) = fs::read_dir(dir) {
+                for e in entries.take(16384).flatten() {
+                    let path = e.path();
+                    if path
+                        .extension()
+                        .is_some_and(|v| v.eq_ignore_ascii_case("dcp"))
+                        && e.file_type().is_ok_and(|t| t.is_file())
+                        && path.file_stem().is_some_and(|v| {
+                            normalize(&v.to_string_lossy()).contains(&normalize(model))
+                        })
+                        && let Ok(p) = read(&path)
+                        && p.model.as_deref().is_none_or(|m| model_matches(m, model))
+                    {
+                        names.insert(p.name);
+                    }
+                }
+            }
+        }
+    }
+    names.into_iter().collect()
 }
 fn find_in_roots(roots: &[PathBuf], model: &str, name: &str) -> Result<Option<Profile>> {
     ensure!(
@@ -790,6 +912,24 @@ pub fn find(model: &str, name: &str) -> Result<Option<Profile>> {
     find_requested(&roots(), model, requested)
 }
 fn find_requested(roots: &[PathBuf], model: &str, requested: &str) -> Result<Option<Profile>> {
+    if requested.eq_ignore_ascii_case(crate::enhanced_profile::NAME)
+        && let Some(mut base) = find_in_roots(roots, model, "Adobe Standard")?
+    {
+        base.requested_name = Some(requested.into());
+        match crate::enhanced_profile::read() {
+            Ok(enhanced) => {
+                base.name = crate::enhanced_profile::NAME.into();
+                base.extra_look = Some(enhanced.look);
+                base.enhanced_tone = Some(enhanced.tone);
+                base.fingerprint ^= enhanced.fingerprint.rotate_left(19);
+            }
+            Err(error) => {
+                base.fallback = true;
+                base.warning = Some(format!("未执行 Adobe Color：{error}；使用 Adobe Standard"));
+            }
+        }
+        return Ok(Some(base));
+    }
     if let Some(mut profile) = find_in_roots(roots, model, requested)? {
         profile.requested_name = Some(requested.into());
         return Ok(Some(profile));
@@ -950,6 +1090,18 @@ mod tests {
         assert!(ToneCurve::new(vec![[0., 0.], [0.5, 0.8], [0.6, 0.7], [1., 1.]]).is_err());
     }
     #[test]
+    fn adobe_profile_curve_uses_natural_c2_spline() {
+        let points = vec![[0., 0.], [0.2, 0.4], [0.8, 0.6], [1., 1.]];
+        let adobe = ToneCurve::adobe(points.clone()).unwrap();
+        // Natural boundary equations give slopes [7/3,4/3,4/3,7/3].
+        assert!((adobe.eval(0.1) - 0.225).abs() < 1e-6);
+        assert!((adobe.eval(0.9) - 0.775).abs() < 1e-6);
+        assert!((adobe.eval(0.5) - 0.5).abs() < 1e-6);
+        assert!((adobe.eval(0.1) - ToneCurve::new(points).unwrap().eval(0.1)).abs() > 0.001);
+        let identity = ToneCurve::adobe(vec![[0., 0.], [1., 1.]]).unwrap();
+        assert!((identity.eval(0.123) - 0.123).abs() < 1e-7);
+    }
+    #[test]
     fn profile_search_respects_model_and_make_prefix() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
@@ -982,12 +1134,18 @@ mod tests {
         )
         .unwrap();
         let roots = [directory.path().to_path_buf()];
-        let p = find_requested(&roots, "ILCE-6700", "Adobe Color")
+        let p = find_requested(&roots, "ILCE-6700", "Unknown Enhanced Look")
             .unwrap()
             .unwrap();
         assert_eq!(p.name, "Adobe Standard");
-        assert_eq!(p.requested_name.as_deref(), Some("Adobe Color"));
-        assert!(p.fallback && p.warning.as_deref().unwrap().contains("未执行 Adobe Color"));
+        assert_eq!(p.requested_name.as_deref(), Some("Unknown Enhanced Look"));
+        assert!(
+            p.fallback
+                && p.warning
+                    .as_deref()
+                    .unwrap()
+                    .contains("未执行 Unknown Enhanced Look")
+        );
         assert!(
             !find_requested(&roots, "ILCE-6700", "Adobe Standard")
                 .unwrap()

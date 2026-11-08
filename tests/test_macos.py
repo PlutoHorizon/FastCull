@@ -78,6 +78,8 @@ class MacTests(unittest.TestCase):
         data = module.info_plist('2.7.4')
         self.assertEqual(data['CFBundleExecutable'], 'fastcull')
         self.assertEqual(data['CFBundlePackageType'], 'APPL')
+        self.assertEqual(data['CFBundleIconFile'], 'FastCull.icns')
+        self.assertTrue((ROOT / 'assets/fastcull.icns').is_file())
         self.assertTrue(data['NSHighResolutionCapable'])
         self.assertEqual(data['LSMinimumSystemVersion'], '11.0')
 

@@ -33,14 +33,16 @@ impl View {
         self.pan *= next / self.scale();
         self.scale = Some(next);
     }
+    pub fn hundred_percent(&mut self) {
+        self.scale = Some(1.);
+        self.pan = Vec2::ZERO;
+    }
     pub fn needs_full(&self) -> bool {
         !self.is_fit() && self.scale() > self.fit * 1.01
     }
     fn layout(&mut self, area: Rect, pixels: Vec2, ppp: f32) -> Rect {
         let native = pixels / ppp;
-        self.fit = (area.width() / native.x)
-            .min(area.height() / native.y)
-            .min(1.);
+        self.fit = (area.width() / native.x).min(area.height() / native.y);
         let size = native * self.scale();
         let limit = ((size - area.size()) * 0.5).max(Vec2::ZERO);
         self.pan = self.pan.clamp(-limit, limit);
@@ -61,15 +63,20 @@ impl View {
         pixels: Vec2,
         picking: bool,
     ) -> Rect {
-        self.layout(area, pixels, ui.ctx().pixels_per_point());
+        let screen = self.layout(area, pixels, ui.ctx().pixels_per_point());
         if !picking {
             if response.dragged() {
                 self.pan += response.drag_delta();
             }
-            if response.double_clicked() {
+            if response.clicked() {
                 if self.is_fit() {
-                    let anchor = response.interact_pointer_pos().unwrap_or(area.center());
-                    self.zoom_at(1. / self.scale(), anchor, area);
+                    let anchor = response
+                        .interact_pointer_pos()
+                        .filter(|p| screen.contains(*p))
+                        .map(|p| (screen.center() - p) / screen.size())
+                        .unwrap_or(Vec2::ZERO);
+                    self.hundred_percent();
+                    self.pan = anchor * pixels / ui.ctx().pixels_per_point();
                 } else {
                     self.fit();
                 }
@@ -102,6 +109,9 @@ impl View {
                 egui::CursorIcon::Grab
             });
         }
+        if response.clicked() || response.dragged() {
+            ui.ctx().request_repaint();
+        }
         self.layout(area, pixels, ui.ctx().pixels_per_point())
     }
 }
@@ -109,6 +119,75 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn single_click_centers_subject_like_culler_and_drag_release_keeps_zoom() {
+        let ctx = egui::Context::default();
+        let mut view = View::default();
+        let pixels = Vec2::new(6000., 4000.);
+        let mut time = 0.;
+        let mut run = |view: &mut View, events| {
+            time += 0.1;
+            let mut rect = Rect::NOTHING;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900., 600.))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let (area, response) = ui.allocate_exact_size(
+                            ui.available_size(),
+                            egui::Sense::click_and_drag(),
+                        );
+                        rect = view.interact(ui, area, &response, pixels, false);
+                    });
+                },
+            );
+            rect
+        };
+        let fitted = run(&mut view, vec![]);
+        let pos = fitted.center() + fitted.size() * Vec2::new(0.12, -0.08);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        run(
+            &mut view,
+            vec![egui::Event::PointerMoved(pos), button(pos, true)],
+        );
+        let zoomed = run(&mut view, vec![button(pos, false)]);
+        assert!(
+            !view.is_fit(),
+            "one click must enter 100%, as in culling mode"
+        );
+        assert_eq!(view.scale(), 1.);
+        let subject = zoomed.min + zoomed.size() * Vec2::new(0.62, 0.42);
+        assert!(
+            (subject - fitted.center()).length() < 0.01,
+            "clicked subject must be centered"
+        );
+        run(
+            &mut view,
+            vec![egui::Event::PointerMoved(pos), button(pos, true)],
+        );
+        run(
+            &mut view,
+            vec![egui::Event::PointerMoved(pos + Vec2::new(70., 30.))],
+        );
+        let dragged = run(&mut view, vec![button(pos + Vec2::new(70., 30.), false)]);
+        assert!(!view.is_fit(), "drag release must not toggle zoom");
+        assert!((dragged.center() - zoomed.center() - Vec2::new(70., 30.)).length() < 0.01);
+        run(
+            &mut view,
+            vec![egui::Event::PointerMoved(pos), button(pos, true)],
+        );
+        run(&mut view, vec![button(pos, false)]);
+        assert!(view.is_fit(), "next click must return to fit");
+    }
     #[test]
     fn pointer_anchor_survives_zoom_and_preview_replacement() {
         let area = Rect::from_min_size(Pos2::ZERO, Vec2::new(900., 600.));

@@ -1,0 +1,1590 @@
+{
+  "date": "2026-11-03",
+  "photoshop": "27.11.0",
+  "acr": "18.7",
+  "process_version": "11.0",
+  "pipeline": "scene-prophoto-v2-embedded",
+  "installed_exe_sha256": "9e2280794c2496fe71cf3defd6d2f042cbb6035a3f26a57af80ee1e9591a238b",
+  "comparison_probe_sha256": "57dcae9615fc5b28fba1901e41c0622885bf32e7f7eeb59867fb4cecac8f3977",
+  "native_dll_sha256": "870e78601ddd9340342406eadc041e2a73947cf331649419fd46f2e6fd0585c6",
+  "source_hashes_before_and_after": {
+    "arw": "1263b3a29e67216ffaae0fd82c1c569b3dc6a9443c1b10a7da17a33feedcb622",
+    "nef": "5922721d13f11795557d97fdeb0a60b900086c402bc82a848ff280d15b99ffd4",
+    "dng": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b"
+  },
+  "case_count": 26,
+  "all_profile_and_controls_verified": true,
+  "comparison": {
+    "image": "sRGB 8-bit; longest edge 1280; exact matching output dimensions",
+    "statistics": "RGB absolute difference after common Pillow bicubic resize to 192x128; code values 0-255; no per-image fit",
+    "not_proven": [
+      "all cameras and scenes",
+      "perceptual color accuracy or Delta E",
+      "ACR proprietary processing equivalence",
+      "macOS runtime or monitor appearance"
+    ]
+  },
+  "user_confirmed_no_mac": true,
+  "rows": [
+    {
+      "name": "arw-Adobe-Standard-base",
+      "format": "arw",
+      "requested_profile": "Adobe Standard",
+      "variant": "base",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t853\t1280\tsRGB IEC61966-2.1\t0\t4437\t13\t4210\t499\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0\nSIZE\t853\t1280\n",
+      "metrics": {
+        "mae_rgb_8bit": 4.385810004340278,
+        "rmse_rgb_8bit": 5.660539493437956,
+        "p95_abs_rgb_8bit": 11.0,
+        "native_size": [
+          853,
+          1280
+        ],
+        "acr_size": [
+          853,
+          1280
+        ]
+      },
+      "seconds": 11.45,
+      "reference_sha256": "1f4047ca437f94ab05e77b40b1b4100fc902d77545209897dddd160a9f6f369f",
+      "native_sha256": "64658fef504fcf52f2fbb80cf0ff4118e6afe1b2c60daca01433386d6b110572",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\arw-Adobe-Standard-base",
+      "metadata_sha256": "f47881511c13964179014845dd0e7bf50ed8446b3bb3f852019b214798bcddb1",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "0c51e45653991790943f3510144dac09ca05df20f46b9e431994fad4b5361cb5",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "arw-Adobe-Standard-warm",
+      "format": "arw",
+      "requested_profile": "Adobe Standard",
+      "variant": "warm",
+      "requested": {
+        "Temperature": 7500,
+        "Tint": 20,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "7500",
+        "Tint": "+20",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t853\t1280\tsRGB IEC61966-2.1\t0\t1234\t5\t289\t1013\t7500\t+20",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0\nSIZE\t853\t1280\n",
+      "metrics": {
+        "mae_rgb_8bit": 4.668185763888889,
+        "rmse_rgb_8bit": 5.980987944886279,
+        "p95_abs_rgb_8bit": 12.0,
+        "native_size": [
+          853,
+          1280
+        ],
+        "acr_size": [
+          853,
+          1280
+        ]
+      },
+      "seconds": 4.39,
+      "reference_sha256": "3adfd0b1d5161fa4b34d6ec9f6cee1cb353754880173c62fb3b7081ebdfe3546",
+      "native_sha256": "0c0e0f29ee92f0c433e4b5267268ed6bd037c74a5c2e1fd4955e51567aead3cb",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\arw-Adobe-Standard-warm",
+      "metadata_sha256": "490838b324b1a6c0a223a57483b6ec1ad7e1a49c230db0080f5148933d0e45ae",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"7500\" crs:Tint=\"20\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "cd6eb19b6d2bb8094d5fdae9aec32ca1c88dff2568a57115a4729640d7c55c04",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "arw-Adobe-Standard-dark",
+      "format": "arw",
+      "requested_profile": "Adobe Standard",
+      "variant": "dark",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": -1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "-1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t853\t1280\tsRGB IEC61966-2.1\t0\t1280\t4\t340\t1055\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0\nSIZE\t853\t1280\n",
+      "metrics": {
+        "mae_rgb_8bit": 3.7636040581597223,
+        "rmse_rgb_8bit": 4.862783225559692,
+        "p95_abs_rgb_8bit": 9.0,
+        "native_size": [
+          853,
+          1280
+        ],
+        "acr_size": [
+          853,
+          1280
+        ]
+      },
+      "seconds": 4.77,
+      "reference_sha256": "44ac16ed93a905e36d0612c05ee44ce73d5d405133d1902c8d7a5a6f50f27513",
+      "native_sha256": "063a5e3cb5ecdc720eeba804f86e25cc72d02726b344fedf805a0699188a1526",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\arw-Adobe-Standard-dark",
+      "metadata_sha256": "c16bece97c08ca8c28f2a756319ed7030e5cfe723dac92a54a2bb8014037cf26",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"-1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "1788b5999f881db0a91083fcbf7da59cca64112d5f8814ed38c276a5f32f02f5",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "arw-Adobe-Standard-bright",
+      "format": "arw",
+      "requested_profile": "Adobe Standard",
+      "variant": "bright",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "+1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t853\t1280\tsRGB IEC61966-2.1\t0\t1513\t5\t384\t1232\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0\nSIZE\t853\t1280\n",
+      "metrics": {
+        "mae_rgb_8bit": 5.055731879340278,
+        "rmse_rgb_8bit": 6.101531934586979,
+        "p95_abs_rgb_8bit": 12.0,
+        "native_size": [
+          853,
+          1280
+        ],
+        "acr_size": [
+          853,
+          1280
+        ]
+      },
+      "seconds": 5.72,
+      "reference_sha256": "77411b49d4ca2b7d29c4e16afd2e922ee48d29d97e02d1669f1d5598c8e67ca6",
+      "native_sha256": "4c86265e24bbdaa1af24fe78f2a2b8f26db0bb5fbe7f177936331f5d68e5cda1",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\arw-Adobe-Standard-bright",
+      "metadata_sha256": "57ee801e6b95f12fb05f2dc77b1263a53b8b679d6695663c6e061ffff1729767",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "162c89cf0ca7817d07fe46c976abbffb3fbb7f8aafc34b97eb573d62cbe7ce50",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "arw-Adobe-Standard-contrast",
+      "format": "arw",
+      "requested_profile": "Adobe Standard",
+      "variant": "contrast",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 40
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "+40",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t853\t1280\tsRGB IEC61966-2.1\t0\t1660\t4\t394\t1073\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0\nSIZE\t853\t1280\n",
+      "metrics": {
+        "mae_rgb_8bit": 9.44162326388889,
+        "rmse_rgb_8bit": 11.420440421384928,
+        "p95_abs_rgb_8bit": 21.0,
+        "native_size": [
+          853,
+          1280
+        ],
+        "acr_size": [
+          853,
+          1280
+        ]
+      },
+      "seconds": 5.14,
+      "reference_sha256": "e56373d4da37549234d0781ff30690d31005dd6592ce8b315428f8c5cfc9b0e0",
+      "native_sha256": "1dd2a70e866f2bd2c21bdf4c2a856831cfd37f915b5290ec9ef429274e595b7f",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\arw-Adobe-Standard-contrast",
+      "metadata_sha256": "a2bedf2fc706e7402dd33c9659b77f8c3ff7e526d81a32b45b42fa6820533f4d",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"40\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "3f8824098b8a7e1cd56a86b861e9e78c2612be44ebc2c9910f3cd9dfa049933b",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "nef-Adobe-Standard-base",
+      "format": "nef",
+      "requested_profile": "Adobe Standard",
+      "variant": "base",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "6698D1DBEA05636B292F099456C7D5A6",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t852\tsRGB IEC61966-2.1\t0\t1056\t5\t226\t400\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "metrics": {
+        "mae_rgb_8bit": 1.4767659505208333,
+        "rmse_rgb_8bit": 1.6624009538687143,
+        "p95_abs_rgb_8bit": 3.0,
+        "native_size": [
+          1280,
+          852
+        ],
+        "acr_size": [
+          1280,
+          852
+        ]
+      },
+      "seconds": 2.83,
+      "reference_sha256": "7413bbdf3f7c674945e0efb397ba9e622b3843c96935daad65f63e966bd2f4a8",
+      "native_sha256": "6bd60b8b26f8c6854d319b1d81eddff98267fd9bc0328adace721bb5eec87422",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\nef-Adobe-Standard-base",
+      "metadata_sha256": "486d3af448ea84289e6ce35166bf3b286852a15070e7351f281800cf92ab9d10",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "0c51e45653991790943f3510144dac09ca05df20f46b9e431994fad4b5361cb5",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "nef-Adobe-Standard-warm",
+      "format": "nef",
+      "requested_profile": "Adobe Standard",
+      "variant": "warm",
+      "requested": {
+        "Temperature": 7500,
+        "Tint": 20,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "6698D1DBEA05636B292F099456C7D5A6",
+        "WhiteBalance": "Custom",
+        "Temperature": "7500",
+        "Tint": "+20",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t852\tsRGB IEC61966-2.1\t0\t1095\t3\t271\t339\t7500\t+20",
+      "native_response": "PROFILE\tAdobe Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "metrics": {
+        "mae_rgb_8bit": 1.4873318142361112,
+        "rmse_rgb_8bit": 1.692179404541013,
+        "p95_abs_rgb_8bit": 3.0,
+        "native_size": [
+          1280,
+          852
+        ],
+        "acr_size": [
+          1280,
+          852
+        ]
+      },
+      "seconds": 2.95,
+      "reference_sha256": "24b64fc1b29618c76929346c1e863f7d72cc4231c555572c5ffe20b8ba702242",
+      "native_sha256": "4a1bcf38a73e7e38f093f7ebda7473d0e6baece3c22a623b7af7cbce1e0a7287",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\nef-Adobe-Standard-warm",
+      "metadata_sha256": "255434c14f5988a829db55109cf409a8c3839c3f029eb60843f7f4395463e0ec",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"7500\" crs:Tint=\"20\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "cd6eb19b6d2bb8094d5fdae9aec32ca1c88dff2568a57115a4729640d7c55c04",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "nef-Adobe-Standard-dark",
+      "format": "nef",
+      "requested_profile": "Adobe Standard",
+      "variant": "dark",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": -1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "6698D1DBEA05636B292F099456C7D5A6",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "-1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t852\tsRGB IEC61966-2.1\t0\t1376\t4\t278\t395\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "metrics": {
+        "mae_rgb_8bit": 1.3341878255208333,
+        "rmse_rgb_8bit": 1.4788777960299078,
+        "p95_abs_rgb_8bit": 2.0,
+        "native_size": [
+          1280,
+          852
+        ],
+        "acr_size": [
+          1280,
+          852
+        ]
+      },
+      "seconds": 3.28,
+      "reference_sha256": "c4e3dd7bde2313810afeb132f4ab963d68d32b2e9f35b1c6dc3d2234f32263c4",
+      "native_sha256": "5f2e6d876c205c0bfb5271df72908e5fb6a0c4655bc0c117b5f6d0bd6f132133",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\nef-Adobe-Standard-dark",
+      "metadata_sha256": "558d4eab22f11f100de8076bdf5a6d443617f11d2bdffd3aeec0ace230dbee01",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"-1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "1788b5999f881db0a91083fcbf7da59cca64112d5f8814ed38c276a5f32f02f5",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "nef-Adobe-Standard-bright",
+      "format": "nef",
+      "requested_profile": "Adobe Standard",
+      "variant": "bright",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "6698D1DBEA05636B292F099456C7D5A6",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "+1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t852\tsRGB IEC61966-2.1\t0\t1284\t3\t230\t407\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "metrics": {
+        "mae_rgb_8bit": 1.6232774522569444,
+        "rmse_rgb_8bit": 1.9483726906044068,
+        "p95_abs_rgb_8bit": 3.0,
+        "native_size": [
+          1280,
+          852
+        ],
+        "acr_size": [
+          1280,
+          852
+        ]
+      },
+      "seconds": 2.95,
+      "reference_sha256": "913417f09d926dd5470a5649463b4c98d7fa8195adda3cb5ed3a011f607f3b81",
+      "native_sha256": "b6e9c78cc310636a46166fb553b9ce09c6f7553d947f019d6b2dd277d5b3c8dd",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\nef-Adobe-Standard-bright",
+      "metadata_sha256": "11f523c769c15837671a0c9a1a00315eadb4736b9184886f28c8b75eea4f5638",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "162c89cf0ca7817d07fe46c976abbffb3fbb7f8aafc34b97eb573d62cbe7ce50",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "nef-Adobe-Standard-contrast",
+      "format": "nef",
+      "requested_profile": "Adobe Standard",
+      "variant": "contrast",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 40
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "6698D1DBEA05636B292F099456C7D5A6",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "+40",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t852\tsRGB IEC61966-2.1\t0\t1149\t5\t324\t510\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "metrics": {
+        "mae_rgb_8bit": 2.648708767361111,
+        "rmse_rgb_8bit": 4.750185600357866,
+        "p95_abs_rgb_8bit": 11.0,
+        "native_size": [
+          1280,
+          852
+        ],
+        "acr_size": [
+          1280,
+          852
+        ]
+      },
+      "seconds": 3.17,
+      "reference_sha256": "897a7edde4cbf1effe94cab8ae5b79623beb6f73def66fde77c533ded2bd2e9d",
+      "native_sha256": "0deac7213cb4f731055f252f1eb22c39981b02289a43db5dfc0609489d47532f",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\nef-Adobe-Standard-contrast",
+      "metadata_sha256": "e61e85a870f1822a78b0439737bd4ba0532e142420e798b19314eb04e29a1df2",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"40\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "3f8824098b8a7e1cd56a86b861e9e78c2612be44ebc2c9910f3cd9dfa049933b",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Adobe-Standard-base",
+      "format": "dng",
+      "requested_profile": "Adobe Standard",
+      "variant": "base",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t31\t1081\t3\t373\t509\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 3.3853895399305554,
+        "rmse_rgb_8bit": 4.010775146315928,
+        "p95_abs_rgb_8bit": 7.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 6.45,
+      "reference_sha256": "7106054d63ab5710ae1b430e1059a75d5781e27996ff6e3558f3f65a01e91f98",
+      "native_sha256": "d8698f83d7153aa7f2332ab1a2fd46471f92347c1942779de1188d8c54d62fcc",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Adobe-Standard-base",
+      "metadata_sha256": "e086ebef7e507a8f1ab7381c90913b6e7ec8878e0bbe9c7956e5022f1623ac4f",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "0c51e45653991790943f3510144dac09ca05df20f46b9e431994fad4b5361cb5",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Adobe-Standard-warm",
+      "format": "dng",
+      "requested_profile": "Adobe Standard",
+      "variant": "warm",
+      "requested": {
+        "Temperature": 7500,
+        "Tint": 20,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "7500",
+        "Tint": "+20",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t33\t1486\t3\t325\t519\t7500\t+20",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 3.420138888888889,
+        "rmse_rgb_8bit": 4.121845516279018,
+        "p95_abs_rgb_8bit": 7.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 6.53,
+      "reference_sha256": "cc5e0ad217f360dcf10e35f8ec50c58325c6d7677480d95ed61291d75d85eedf",
+      "native_sha256": "bd91d47806a9cff55964298628ebd245aa09e82d9c59d9b653bbcaa9258d31bf",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Adobe-Standard-warm",
+      "metadata_sha256": "913b95650bc828d646284507ca41ca2641daa5db8d73b4327ac691a73a417518",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"7500\" crs:Tint=\"20\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "cd6eb19b6d2bb8094d5fdae9aec32ca1c88dff2568a57115a4729640d7c55c04",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Adobe-Standard-dark",
+      "format": "dng",
+      "requested_profile": "Adobe Standard",
+      "variant": "dark",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": -1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "-1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t24\t892\t4\t302\t492\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 3.5369737413194446,
+        "rmse_rgb_8bit": 3.8168093814292936,
+        "p95_abs_rgb_8bit": 6.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 5.69,
+      "reference_sha256": "10b7bb3b332f9e24e06a85d7e01cb9ed974a55bfb1976204d6fd1717d938f93c",
+      "native_sha256": "c015e0c8138e2c0fdfbe061380ce9ef9f3acc921f506335690988cb582111438",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Adobe-Standard-dark",
+      "metadata_sha256": "408aa1b7135375e5f791f86efb912f96fd6915dac028fc4c11191344af85d0b6",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"-1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "1788b5999f881db0a91083fcbf7da59cca64112d5f8814ed38c276a5f32f02f5",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Adobe-Standard-bright",
+      "format": "dng",
+      "requested_profile": "Adobe Standard",
+      "variant": "bright",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "+1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t24\t1001\t3\t336\t431\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 2.9322509765625,
+        "rmse_rgb_8bit": 4.005768748720921,
+        "p95_abs_rgb_8bit": 7.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 5.7,
+      "reference_sha256": "74f9444619c64bfc9e4ceaa0accf6ff7af5ec45cf3672290699e02adf053e7df",
+      "native_sha256": "f26feb0a0792ca6da7731f967d9cea6c6b6b68d3c63258e33ab2c88a0e5a4563",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Adobe-Standard-bright",
+      "metadata_sha256": "884b011a3c33e4e597e08ec51a2be3d858d7842afe5ba98f245c2eb3cd5ab92e",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "162c89cf0ca7817d07fe46c976abbffb3fbb7f8aafc34b97eb573d62cbe7ce50",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Adobe-Standard-contrast",
+      "format": "dng",
+      "requested_profile": "Adobe Standard",
+      "variant": "contrast",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 40
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Adobe Standard",
+        "CameraProfileDigest": "32B5DBF4BEB7729B6B0ACA6DC0F06292",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "+40",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t26\t1113\t3\t376\t399\t5500\t0",
+      "native_response": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 5.230360243055555,
+        "rmse_rgb_8bit": 8.012170646723785,
+        "p95_abs_rgb_8bit": 18.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 6.66,
+      "reference_sha256": "20dbe8e69241b7c91d4cdd959f9a178977994958168c41dc4ef7046b5335ceba",
+      "native_sha256": "b90dda10709517afd38bc6d619a086f1c22b1890f802964d1db7c5d7672580c3",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Adobe-Standard-contrast",
+      "metadata_sha256": "86f2d39d83cb9933bbb1e2c7b2ec9a733a8c551b31b7f462717f39c2a26ec4fb",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Adobe Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"40\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "3f8824098b8a7e1cd56a86b861e9e78c2612be44ebc2c9910f3cd9dfa049933b",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Embedded-base",
+      "format": "dng",
+      "requested_profile": "Embedded",
+      "variant": "base",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Embedded",
+        "CameraProfileDigest": "F2DC619DD28B490FAE7C0A3246B6685A",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t26\t1004\t4\t294\t407\t5500\t0",
+      "native_response": "PROFILE\tEmbedded · 内嵌 · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 2.576266818576389,
+        "rmse_rgb_8bit": 2.7950679877998694,
+        "p95_abs_rgb_8bit": 4.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 5.47,
+      "reference_sha256": "97721f57ea02b34937cd1bada9f5f498b0ae6889fd744daf339dafab880c6751",
+      "native_sha256": "b9bb79be57b2af97a044f2daa3e31734a4f0ae6fe52b19f9c504ebe86ebe4a9f",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Embedded-base",
+      "metadata_sha256": "19adb8fe826bd5a9f9f49ed944d8670dfc66608d86b72eedf6c7b4eef4208a05",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Embedded\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "c50bb83ca19b5b1913a6997282adfc7c5caf82979faacefdb16e70e5f3055717",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Embedded-warm",
+      "format": "dng",
+      "requested_profile": "Embedded",
+      "variant": "warm",
+      "requested": {
+        "Temperature": 7500,
+        "Tint": 20,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Embedded",
+        "CameraProfileDigest": "F2DC619DD28B490FAE7C0A3246B6685A",
+        "WhiteBalance": "Custom",
+        "Temperature": "7500",
+        "Tint": "+20",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t26\t983\t3\t335\t451\t7500\t+20",
+      "native_response": "PROFILE\tEmbedded · 内嵌 · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 2.6026068793402777,
+        "rmse_rgb_8bit": 2.9049032684638476,
+        "p95_abs_rgb_8bit": 5.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 5.94,
+      "reference_sha256": "9e8764d55f22cfe931bfa6edb8dd4d3fe881a3976cf0d42e933a5cfba6ae007a",
+      "native_sha256": "69feccaf404d4907feb65450bfcd01a4b1b8f3afa02ba863a0890f72e29728b1",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Embedded-warm",
+      "metadata_sha256": "805ed5457e6f90637efb40d40973da038201c94771988898c8c440c0ff6efab1",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Embedded\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"7500\" crs:Tint=\"20\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "a2f8df7d17698cf3d751f92fdd556ad592bf612ec5cb7b359b404cb913598735",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Embedded-dark",
+      "format": "dng",
+      "requested_profile": "Embedded",
+      "variant": "dark",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": -1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Embedded",
+        "CameraProfileDigest": "F2DC619DD28B490FAE7C0A3246B6685A",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "-1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t26\t985\t4\t321\t491\t5500\t0",
+      "native_response": "PROFILE\tEmbedded · 内嵌 · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 2.928371853298611,
+        "rmse_rgb_8bit": 3.0017785345790786,
+        "p95_abs_rgb_8bit": 4.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 5.66,
+      "reference_sha256": "b526acc2766bdffdcaf3857fbaf88cda06c967eab9759b47f6342b76cc997764",
+      "native_sha256": "d1187dea17b89392d531fcd944876fcf336409b16a81c211e2afce6e95c58f6b",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Embedded-dark",
+      "metadata_sha256": "390cdd850da911c65c9cbaa939ca1d64a9c70cffb66dc33926d04f9ae2b1835d",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Embedded\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"-1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "b257e3faf577f61b097618c97827245268ccc991fb8187e2ba48053dc1bc2b23",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Embedded-bright",
+      "format": "dng",
+      "requested_profile": "Embedded",
+      "variant": "bright",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Embedded",
+        "CameraProfileDigest": "F2DC619DD28B490FAE7C0A3246B6685A",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "+1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t26\t1002\t3\t350\t563\t5500\t0",
+      "native_response": "PROFILE\tEmbedded · 内嵌 · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 1.9805636935763888,
+        "rmse_rgb_8bit": 2.361038665657377,
+        "p95_abs_rgb_8bit": 4.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 5.78,
+      "reference_sha256": "af59f90a2780101236a10ead7a3e00cf6dd8023c5479706e3864e2cc58844cee",
+      "native_sha256": "2a0c1d5f05a4d80bb93c0dfdcc6f3bf12c48c913dab8de04309c8ae149d7ffc5",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Embedded-bright",
+      "metadata_sha256": "db05cd4b15ea94bb71fe6d3752f2213a6ad23ca7c9171810dda4d3b1e7bc6cf4",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Embedded\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "4440c2a4b5237722d278f3296010d0954ee30b94c8c26d74b2b24617fcde3057",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "dng-Embedded-contrast",
+      "format": "dng",
+      "requested_profile": "Embedded",
+      "variant": "contrast",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 40
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Embedded",
+        "CameraProfileDigest": "F2DC619DD28B490FAE7C0A3246B6685A",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "+40",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t25\t1071\t3\t316\t386\t5500\t0",
+      "native_response": "PROFILE\tEmbedded · 内嵌 · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "metrics": {
+        "mae_rgb_8bit": 4.876003689236111,
+        "rmse_rgb_8bit": 7.169092521847208,
+        "p95_abs_rgb_8bit": 16.0,
+        "native_size": [
+          1280,
+          853
+        ],
+        "acr_size": [
+          1280,
+          853
+        ]
+      },
+      "seconds": 5.61,
+      "reference_sha256": "539d931c0350439f745d95f2073375a373932c2fc6dd735e8fcb71921392a7a9",
+      "native_sha256": "67ee7484da597386619feb197f29a58063877a491e75c5cfa5ae9446d56bee25",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\cases\\dng-Embedded-contrast",
+      "metadata_sha256": "779450ed7f58bec19fe8aad563450852a1a06183390e6dfd78ab410053e1f6a1",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Embedded\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"40\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "07da400f291d58faf0319d7864f8089203595db49413945b479c18a14d34dd06",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "arw-Camera-ST-base",
+      "format": "arw",
+      "requested_profile": "Camera ST",
+      "variant": "base",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Camera ST",
+        "CameraProfileDigest": "19353A895968532134DFF565DBE621BC",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t853\t1280\tsRGB IEC61966-2.1\t0\t1411\t4\t1211\t492\t5500\t0",
+      "native_response": "PROFILE\tCamera ST · ILCE-6700\nWARNING\t\nBASELINE\t-0.15\nSIZE\t853\t1280\n",
+      "metrics": {
+        "mae_rgb_8bit": 4.541314019097222,
+        "rmse_rgb_8bit": 5.220810575402647,
+        "p95_abs_rgb_8bit": 9.0,
+        "native_size": [
+          853,
+          1280
+        ],
+        "acr_size": [
+          853,
+          1280
+        ]
+      },
+      "seconds": 5.05,
+      "reference_sha256": "586c228fb517c4e06a2ba3a1b6c4cf6d6d898cecd72100c987f1adba371858e1",
+      "native_sha256": "3dac2d1caae58663034c71ea96565d312a0b8bb3e659ec6781a6b019c762fd43",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\camera-cases\\arw-Camera-ST-base",
+      "metadata_sha256": "b33d28fe3bbdedd22236d27fc8ba7c5c2dd67e49c6d86295d84a09d4b8c64b11",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Camera ST\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "f07735a406223332d4c384bc9aee3e8641032f1c4247ae27cd6722b6391a1437",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "arw-Camera-ST-warm",
+      "format": "arw",
+      "requested_profile": "Camera ST",
+      "variant": "warm",
+      "requested": {
+        "Temperature": 7500,
+        "Tint": 20,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Camera ST",
+        "CameraProfileDigest": "19353A895968532134DFF565DBE621BC",
+        "WhiteBalance": "Custom",
+        "Temperature": "7500",
+        "Tint": "+20",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t853\t1280\tsRGB IEC61966-2.1\t0\t1663\t4\t1067\t373\t7500\t+20",
+      "native_response": "PROFILE\tCamera ST · ILCE-6700\nWARNING\t\nBASELINE\t-0.15\nSIZE\t853\t1280\n",
+      "metrics": {
+        "mae_rgb_8bit": 4.405856662326389,
+        "rmse_rgb_8bit": 5.223053417386046,
+        "p95_abs_rgb_8bit": 10.0,
+        "native_size": [
+          853,
+          1280
+        ],
+        "acr_size": [
+          853,
+          1280
+        ]
+      },
+      "seconds": 5.0,
+      "reference_sha256": "4a8444253659ac9bcc3e7da034ea3a7019192d3837c745d41a3f74e8c598d301",
+      "native_sha256": "61d692aae1a1639ec5be7b7f0318e2fe3fad09bfce0be9524dab843d1e027f01",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\camera-cases\\arw-Camera-ST-warm",
+      "metadata_sha256": "8cef850ef638b2377bc5b63a456a6049403caaa2c463c5f4039b02118ac8c89d",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Camera ST\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"7500\" crs:Tint=\"20\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "761fccb2af260aa568b17add0e3b76ab043fc62aedf51f12677ee51c1fb9d4d7",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "arw-Camera-ST-bright",
+      "format": "arw",
+      "requested_profile": "Camera ST",
+      "variant": "bright",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Camera ST",
+        "CameraProfileDigest": "19353A895968532134DFF565DBE621BC",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "+1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t853\t1280\tsRGB IEC61966-2.1\t0\t1392\t4\t1042\t370\t5500\t0",
+      "native_response": "PROFILE\tCamera ST · ILCE-6700\nWARNING\t\nBASELINE\t-0.15\nSIZE\t853\t1280\n",
+      "metrics": {
+        "mae_rgb_8bit": 5.032565646701389,
+        "rmse_rgb_8bit": 5.790969916497988,
+        "p95_abs_rgb_8bit": 10.0,
+        "native_size": [
+          853,
+          1280
+        ],
+        "acr_size": [
+          853,
+          1280
+        ]
+      },
+      "seconds": 4.59,
+      "reference_sha256": "29b0c890cd1063c116635133ae4ff00249e31820fd3b445c2f184add49608ac1",
+      "native_sha256": "0bb8ecc221bee41dc35e6be154d6b8f7b815e7c393e4427f974cf75d682e71fb",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\camera-cases\\arw-Camera-ST-bright",
+      "metadata_sha256": "332660199c0dee62bac4403e0cc0813a262e035e9806af541a8dcf7f51142a50",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Camera ST\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "7b88b17b8ea7957d29b3d1f02d3c29253fb813bce484ca065d0f26f554ee7a52",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "nef-Camera-Standard-base",
+      "format": "nef",
+      "requested_profile": "Camera Standard",
+      "variant": "base",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Camera Standard",
+        "CameraProfileDigest": "91FE72AB308DB49A48E4AA6A30F27C8B",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t852\tsRGB IEC61966-2.1\t0\t1337\t4\t328\t409\t5500\t0",
+      "native_response": "PROFILE\tCamera Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "metrics": {
+        "mae_rgb_8bit": 1.5538058810763888,
+        "rmse_rgb_8bit": 1.7179883097580373,
+        "p95_abs_rgb_8bit": 3.0,
+        "native_size": [
+          1280,
+          852
+        ],
+        "acr_size": [
+          1280,
+          852
+        ]
+      },
+      "seconds": 3.25,
+      "reference_sha256": "fb3548afee80fe17982017ec7e4df69e1d4915f66168b2b8a800fced8a4fef01",
+      "native_sha256": "279a54c8b476622c504e07c6a8d680236e7f3b0694a34110417fe5b2e52974d6",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\camera-cases\\nef-Camera-Standard-base",
+      "metadata_sha256": "9591e99ff9ea5c93c87152953a1316090531a01ac003f1c5f089094d69f0264e",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Camera Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "ad14aa63dcc41030c6cf3ece29569e32495e29f2185202745140185050a1cf81",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "nef-Camera-Standard-warm",
+      "format": "nef",
+      "requested_profile": "Camera Standard",
+      "variant": "warm",
+      "requested": {
+        "Temperature": 7500,
+        "Tint": 20,
+        "Exposure2012": 0,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Camera Standard",
+        "CameraProfileDigest": "91FE72AB308DB49A48E4AA6A30F27C8B",
+        "WhiteBalance": "Custom",
+        "Temperature": "7500",
+        "Tint": "+20",
+        "Exposure2012": "0.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t852\tsRGB IEC61966-2.1\t0\t1240\t5\t403\t411\t7500\t+20",
+      "native_response": "PROFILE\tCamera Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "metrics": {
+        "mae_rgb_8bit": 1.5184597439236112,
+        "rmse_rgb_8bit": 1.689319524462192,
+        "p95_abs_rgb_8bit": 3.0,
+        "native_size": [
+          1280,
+          852
+        ],
+        "acr_size": [
+          1280,
+          852
+        ]
+      },
+      "seconds": 3.3,
+      "reference_sha256": "0d632040acd2069846adfd98eb5e6dd9a6392fe94fc8f028cb9fba1c8fa6907a",
+      "native_sha256": "6e5224b656b4fd4395e85628f2e88ccb2d30cf961483306ff4baabbe0e0ccd2f",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\camera-cases\\nef-Camera-Standard-warm",
+      "metadata_sha256": "9812c01bc88e01795d23ea8602b802516627ade8f59c7e5d70499e9e733f48af",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Camera Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"7500\" crs:Tint=\"20\" crs:Exposure2012=\"0\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "e1cf2fc7355821fea0837b3b9c6bfcadbd5f0bc70bfd36e1505f94cbd3f33043",
+      "profile_and_controls_verified": true
+    },
+    {
+      "name": "nef-Camera-Standard-bright",
+      "format": "nef",
+      "requested_profile": "Camera Standard",
+      "variant": "bright",
+      "requested": {
+        "Temperature": 5500,
+        "Tint": 0,
+        "Exposure2012": 1,
+        "Contrast2012": 0
+      },
+      "effective_acr": {
+        "Version": "18.7",
+        "ProcessVersion": "11.0",
+        "CameraProfile": "Camera Standard",
+        "CameraProfileDigest": "91FE72AB308DB49A48E4AA6A30F27C8B",
+        "WhiteBalance": "Custom",
+        "Temperature": "5500",
+        "Tint": "0",
+        "Exposure2012": "+1.00",
+        "Contrast2012": "0",
+        "Highlights2012": "0",
+        "Shadows2012": "0",
+        "Whites2012": "0",
+        "Blacks2012": "0",
+        "Vibrance": "0",
+        "Saturation": "0",
+        "Sharpness": "0",
+        "LuminanceSmoothing": "0",
+        "ColorNoiseReduction": "0",
+        "ToneCurveName2012": "Linear",
+        "Clarity2012": "0",
+        "Texture": "0",
+        "Dehaze": "0",
+        "LensProfileEnable": "0"
+      },
+      "acr_response": "OK\t1280\t852\tsRGB IEC61966-2.1\t0\t1358\t3\t313\t368\t5500\t0",
+      "native_response": "PROFILE\tCamera Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "metrics": {
+        "mae_rgb_8bit": 1.7109239366319444,
+        "rmse_rgb_8bit": 2.0143965625677387,
+        "p95_abs_rgb_8bit": 3.0,
+        "native_size": [
+          1280,
+          852
+        ],
+        "acr_size": [
+          1280,
+          852
+        ]
+      },
+      "seconds": 3.23,
+      "reference_sha256": "bdbc034573a8a54b83bfec5ef9d759602733512ebceda3262e87e872ecd2fd6b",
+      "native_sha256": "c1945b46c4ed3d20406d5c9932e1f42226e259b7cdb18810037de2722d2c87ff",
+      "folder": ".agent-temp\\2026-11-03-acr-compare\\camera-cases\\nef-Camera-Standard-bright",
+      "metadata_sha256": "1b95ed1387699958c8cf16ec1aa6cdde23617a00ce6a00e24b69a1a09ea29dfd",
+      "request_xmp": "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"18.7\" crs:ProcessVersion=\"11.0\" crs:CameraProfile=\"Camera Standard\" crs:WhiteBalance=\"Custom\" crs:Temperature=\"5500\" crs:Tint=\"0\" crs:Exposure2012=\"1\" crs:Contrast2012=\"0\" crs:Highlights2012=\"0\" crs:Shadows2012=\"0\" crs:Whites2012=\"0\" crs:Blacks2012=\"0\" crs:Vibrance=\"0\" crs:Saturation=\"0\" crs:Sharpness=\"0\" crs:LuminanceSmoothing=\"0\" crs:ColorNoiseReduction=\"0\" crs:AutoTone=\"False\" crs:HasSettings=\"True\" crs:CropEnabled=\"False\" crs:ToneCurveName2012=\"Linear\" crs:Clarity2012=\"0\" crs:Texture=\"0\" crs:Dehaze=\"0\" crs:LensProfileEnable=\"0\" crs:RemoveChromaticAberration=\"False\"><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description></rdf:RDF></x:xmpmeta>",
+      "request_xmp_sha256": "29f5ffd360d15fbae53935d83715d4c95b6b6234b7eade567ac972db343be779",
+      "profile_and_controls_verified": true
+    }
+  ]
+}

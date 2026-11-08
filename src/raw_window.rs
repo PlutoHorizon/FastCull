@@ -107,6 +107,7 @@ impl Request {
 }
 fn editable_updates(updates: &Updates) -> Updates {
     Updates {
+        camera_profile: updates.camera_profile.clone(),
         rating: updates.rating,
         crop: updates.crop,
         exposure: updates.exposure,
@@ -132,6 +133,7 @@ fn receipt(text: &str, expected: &Path) -> Result<Updates> {
         .map(|w| w.edit().context("回执白平衡模式不可编辑"))
         .transpose()?;
     let updates = Updates {
+        camera_profile: v.look_name.or(v.camera_profile),
         rating: v.rating,
         crop: v.crop,
         exposure: v.exposure,
@@ -577,22 +579,17 @@ pub fn run(path: &Path) -> Result<()> {
             .unwrap_or_default()
             .to_string_lossy()
     );
-    let options = eframe::NativeOptions {
-        renderer: eframe::Renderer::Glow,
-        viewport: egui::ViewportBuilder::default()
+    let options = crate::graphics::native_options(
+        egui::ViewportBuilder::default()
             .with_inner_size([1280., 850.])
             .with_min_inner_size([850., 650.]),
-        ..Default::default()
-    };
+    );
     eframe::run_native(
         &title,
         options,
         Box::new(move |cc| {
             crate::ui::configure(&cc.egui_ctx);
-            let preview = cc
-                .gl
-                .as_ref()
-                .map(|gl| crate::raw_preview::Preview::new(gl.clone()));
+            let preview = crate::graphics::raw_preview(cc);
             let receiver = load(&request, &cc.egui_ctx, preview.clone());
             Ok(Box::new(App {
                 request,

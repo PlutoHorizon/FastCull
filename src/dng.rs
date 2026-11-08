@@ -11,6 +11,14 @@ use std::{
 
 const MAX_METADATA: usize = 4 * 1024 * 1024;
 const MAX_JPEG: u64 = 128 * 1024 * 1024;
+mod jxl;
+pub(crate) use jxl::{
+    mask as jxl_mask, native_source as jxl_native_source, preview as jxl_preview,
+};
+/// Release process-owned temporary DNG rasters after the decoder workers stop.
+pub fn clear_decode_cache() {
+    jxl::clear_cache();
+}
 
 struct Reader {
     file: File,
@@ -408,6 +416,7 @@ pub(crate) fn read(path: &Path) -> Result<ArwInfo> {
     let mut seen = HashSet::new();
     let mut previews = Vec::new();
     let mut bitmap_thumbnail: Option<BitmapRef> = None;
+    let mut jxl_preview = false;
     let mut capture = CaptureMetadata::default();
     let mut orientation = 1;
     let (mut raw_size, mut crop_size, mut exif_width, mut exif_height) = (None, None, None, None);
@@ -488,6 +497,16 @@ pub(crate) fn read(path: &Path) -> Result<ArwInfo> {
         // Only rendered, reduced-resolution RGB/YCbCr IFDs are previews.
         // Never mistake lossy/lossless JPEG sensor strips, masks or depth maps for photos.
         if subfile == 1 {
+            if compression == 52546
+                && photometric == 2
+                && samples == 3
+                && dimensions(width, height).is_some()
+                && let Some((off, len)) = strip.zip(strip_len)
+                && (4..=MAX_JPEG).contains(&u64::from(len))
+                && u64::from(off) + u64::from(len) <= r.size
+            {
+                jxl_preview = true;
+            }
             if compression == 1
                 && photometric == 2
                 && samples == 3
@@ -538,7 +557,8 @@ pub(crate) fn read(path: &Path) -> Result<ArwInfo> {
         .or(native_size)
         .context("no DNG image dimensions")?;
     ensure!(
-        !previews.is_empty() || (bitmap_thumbnail.is_some() && native_size.is_some()),
+        !previews.is_empty()
+            || ((bitmap_thumbnail.is_some() || jxl_preview) && native_size.is_some()),
         "no DNG preview"
     );
     let jpeg = previews
@@ -560,10 +580,13 @@ pub(crate) fn read(path: &Path) -> Result<ArwInfo> {
         preview,
         thumbnail,
         bitmap_thumbnail,
+        jxl_preview,
         orientation,
         summary: capture.summary(),
         capture,
-        raw_size: previews.is_empty().then_some(native_size).flatten(),
+        raw_size: (previews.is_empty() && !jxl_preview)
+            .then_some(native_size)
+            .flatten(),
         image_size: native_size.or(Some(largest_size)),
     })
 }
@@ -628,7 +651,7 @@ mod tests {
             v.to_be_bytes()
         }
     }
-    fn ifd(b: &mut [u8], off: usize, entries: &[(u16, u16, u32, u32)], little: bool) {
+    pub(super) fn ifd(b: &mut [u8], off: usize, entries: &[(u16, u16, u32, u32)], little: bool) {
         b[off..off + 2].copy_from_slice(&short(entries.len() as u16, little));
         for (i, &(tag, kind, count, value)) in entries.iter().enumerate() {
             let e = off + 2 + i * 12;

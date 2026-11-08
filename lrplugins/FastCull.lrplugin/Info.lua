@@ -9,13 +9,13 @@
   · 同步选中照片           —— 同步方向: 把选片器写入旁车的评分/颜色/旗标
                               批量取回 LR 目录
 
-运行: Windows x64 + OpenGL 图形驱动；默认使用插件内置 exe，无需 Python。
+运行: Windows x64 + DirectX 12 图形驱动；默认使用插件内置 exe，无需 Python。
      手动选择 .py 时才使用 Python 原型回退。
 ]]
 
 return {
 
-    VERSION = { major = 2, minor = 9, revision = 0 },
+    VERSION = { major = 2, minor = 10, revision = 0 },
 
     LrSdkVersion = 9.0,
     LrSdkMinimumVersion = 6.0,

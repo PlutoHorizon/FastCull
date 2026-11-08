@@ -1,6 +1,6 @@
-//! Local, non-Adobe RAW development. LibRaw applies camera/DNG color matrices,
-//! sensor-stage white balance and linear exposure; the UI owns the seven tone
-//! controls. DCP looks, masks and Adobe's process algorithms are not reproduced.
+//! Local RAW development. The scene path preserves linear camera data and uses
+//! camera/DCP and installed enhanced profiles; display controls remain on the GPU.
+//! Masks and Adobe's proprietary process algorithms are not reproduced.
 use crate::{crop::Crop, imaging::Pixels, native_raw, xmp};
 use anyhow::{Context, Result, ensure};
 use eframe::egui::Vec2;
@@ -62,7 +62,13 @@ pub fn render_scene(request: &SceneRequest) -> Result<SceneRendered> {
         ..Default::default()
     };
     let color_started = Instant::now();
-    let frame = crate::raw_color::prepare(decoded, &values, request.max_edge, &cancelled)?;
+    let frame = crate::raw_color::prepare_from_path(
+        &request.source,
+        decoded,
+        &values,
+        request.max_edge,
+        &cancelled,
+    )?;
     timings.profile_ms = color_started.elapsed().as_secs_f64() * 1000.;
     timings.wall_ms = started.elapsed().as_secs_f64() * 1000.;
     Ok(SceneRendered { frame, timings })

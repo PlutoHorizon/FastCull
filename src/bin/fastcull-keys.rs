@@ -67,6 +67,62 @@ mod native {
             .and_then(|t| SystemTime::now().duration_since(t).ok())
             .is_some_and(|age| age < Duration::from_secs(30))
     }
+    fn fresh_job(modified: SystemTime, now: SystemTime) -> bool {
+        now.duration_since(modified)
+            .is_ok_and(|age| age < Duration::from_secs(10))
+    }
+    // Bridge publishes closed UTF-8 lists by atomic rename. Claim before spawn
+    // so a later scan cannot launch the same request twice. Never execute a
+    // command or program supplied by the queue: only our sibling FastCull.
+    fn drain_launch_queue(
+        dir: &Path,
+        mut spawn: impl FnMut(&Path) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let queue = dir.parent().unwrap_or(dir).join("bridge-requests");
+        if !queue.is_dir() {
+            return Ok(());
+        }
+        for entry in std::fs::read_dir(queue)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "queued") || !entry.file_type()?.is_file() {
+                continue;
+            }
+            if !fresh_job(entry.metadata()?.modified()?, SystemTime::now()) {
+                let _ = std::fs::rename(&path, path.with_extension("expired"));
+                continue;
+            }
+            let claimed = path.with_extension("starting");
+            if std::fs::rename(&path, &claimed).is_err() {
+                continue;
+            }
+            if let Err(error) = spawn(&claimed) {
+                let failed = path.with_extension("failed");
+                let _ = std::fs::rename(&claimed, &failed);
+                let _ = std::fs::write(
+                    dir.join("launch-error"),
+                    format!("{}\n{error:#}", failed.display()),
+                );
+            }
+        }
+        Ok(())
+    }
+    fn launch_bridge_job(request: &Path) -> anyhow::Result<()> {
+        use std::os::windows::process::CommandExt;
+        let executable = std::env::current_exe()?.with_file_name("fastcull.exe");
+        let child = std::process::Command::new(executable)
+            .arg("--bridge-list-owned")
+            .arg(request)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+            .spawn()?;
+        unsafe {
+            AllowSetForegroundWindow(child.id());
+        }
+        Ok(())
+    }
     pub fn run() -> anyhow::Result<()> {
         let mut args: Vec<_> = std::env::args_os().skip(1).collect();
         // Bridge File.execute resolves Windows shortcuts without preserving
@@ -131,7 +187,13 @@ mod native {
             if heartbeat.elapsed() >= Duration::from_secs(1) {
                 let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
                 let _ = std::fs::write(dir.join("helper-alive"), stamp.to_string());
+                if host == "bridge" {
+                    let _ = std::fs::write(dir.join("launcher-ready"), stamp.to_string());
+                }
                 heartbeat = Instant::now();
+            }
+            if host == "bridge" {
+                let _ = drain_launch_queue(&dir, launch_bridge_job);
             }
             let active = foreground(host);
             if registered && !active {
@@ -189,6 +251,51 @@ mod native {
     }
     #[cfg(test)]
     mod tests {
+        use std::{
+            fs,
+            time::{Duration, SystemTime},
+        };
+        #[test]
+        fn queue_claims_closed_lists_once_and_retains_launch_failures() {
+            let root = tempfile::tempdir().unwrap();
+            let host = root.path().join("hotkeys-bridge");
+            let queue = root.path().join("bridge-requests");
+            fs::create_dir_all(&host).unwrap();
+            fs::create_dir_all(&queue).unwrap();
+            fs::write(queue.join("one.txt"), "unfinished").unwrap();
+            fs::write(
+                queue.join("two.queued"),
+                "FASTCULL_BRIDGE_V1\n照片 & %.ARW\n",
+            )
+            .unwrap();
+            let mut calls = 0;
+            super::drain_launch_queue(&host, |request| {
+                calls += 1;
+                assert_eq!(request.extension().unwrap(), "starting");
+                assert!(fs::read_to_string(request)?.contains("照片 & %.ARW"));
+                Ok(())
+            })
+            .unwrap();
+            super::drain_launch_queue(&host, |_| panic!("duplicate launch")).unwrap();
+            assert_eq!(calls, 1);
+            assert!(queue.join("one.txt").exists());
+            fs::write(queue.join("bad.queued"), "invalid").unwrap();
+            super::drain_launch_queue(&host, |_| anyhow::bail!("spawn denied")).unwrap();
+            assert!(queue.join("bad.failed").exists());
+            assert!(
+                fs::read_to_string(host.join("launch-error"))
+                    .unwrap()
+                    .contains("spawn denied")
+            );
+            super::drain_launch_queue(&host, |_| panic!("retry failed job")).unwrap();
+        }
+        #[test]
+        fn stale_or_future_queue_jobs_must_not_launch_on_helper_restart() {
+            let now = SystemTime::now();
+            assert!(super::fresh_job(now, now));
+            assert!(!super::fresh_job(now - Duration::from_secs(10), now));
+            assert!(!super::fresh_job(now + Duration::from_secs(1), now));
+        }
         #[test]
         fn only_exact_adobe_host_executables_match() {
             assert!(super::matches("bridge", "Adobe Bridge.exe"));

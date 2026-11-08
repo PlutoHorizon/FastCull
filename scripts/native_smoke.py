@@ -77,8 +77,13 @@ if args.pipe:
     # Same nested quoting as common.lua's io.popen on Windows.
     command = f'""{exe}" {"--bridge-open" if args.bridge else "--open"} "{state.resolve()}" 2>&1"'
     if args.session:
-        if args.features:
-            (args.scratch/'session.exposure').write_text(''.join(str(v.resolve()).encode().hex()+'\t100000\n' for v in photo_paths)+'END\n',encoding='utf-8')
+        # Simulate a completed LR develop mailbox, including explicit catalog
+        # orientation and crop reset. A missing mailbox correctly blocks the
+        # smoke controller's rotation action, even without --features.
+        baseline_exposure = 100000 if args.features else 0
+        (args.scratch/'session.exposure').write_text(''.join(
+            str(v.resolve()).encode().hex()+f'\t{baseline_exposure}\t1\t0\t-\t-\t-\t-\t-\n'
+            for v in photo_paths)+'END\n',encoding='utf-8')
         command = f'""{exe}" --open "{state.resolve()}" --session "{(args.scratch / "session.txt").resolve()}" --session-id native-test-session 2>&1"'
     # _wpopen is the Windows C-runtime path used by Lua io.popen. Passing cmd's
     # command via Python argv quoting would add another, incompatible quote layer.

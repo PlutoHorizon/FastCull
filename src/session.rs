@@ -59,6 +59,7 @@ impl Session {
             basic: u.basic,
             white_balance: u.white_balance.map(Into::into),
             camera_profile: None,
+            look_name: None,
             process_version: None,
             rating: u.rating,
             label: u.label.clone(),

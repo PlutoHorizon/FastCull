@@ -117,10 +117,18 @@ class SourceManifestTests(unittest.TestCase):
     def test_source_manifest_is_complete_and_excludes_private_outputs(self):
         paths = release.source_paths()
         for required in ['scripts/adobe-raw-render.ps1', 'bridge/FastCullRawRender.jsx',
+                         'build.rs', 'assets/fastcull.png', 'assets/fastcull.ico',
+                         'assets/fastcull.icns', 'scripts/build-icons.py',
+                         'scripts/bridge_startup_report.py', 'docs/FOCUS-POINTS.md',
                          'lrplugins/FastCull.lrplugin/raw_settings.lua',
                          'docs/RAW-EDITING.md', 'docs/DNG.md',
                          'native/white_balance.h', 'native/white_balance_table.inc',
                          'docs/COLOR-PIPELINE.md', 'src/dcp.rs', 'src/raw_color.rs',
+                         'src/raw_preview.wgsl', 'src/raw_preview_wgpu.rs',
+                         'src/raw_preview_gl.rs', 'src/exposure_preview_gl.rs',
+                         'src/embedded_profile.rs', 'src/macos_color.rs',
+                         'src/enhanced_profile.rs', 'src/raw_profiles.rs',
+                         'vendor/ADOBE-DNG-SDK-LICENSE.txt',
                          'docs/raw-window-validation-2026-10-24.json']:
             self.assertIn(ROOT/required, paths)
         self.assertGreater(len(paths), 60)

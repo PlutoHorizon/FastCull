@@ -1,12 +1,16 @@
 # FastCull
 
-轻量 RAW/JPEG 选片器，使用 Rust 开发，可独立运行，也可从 Adobe Bridge 和 Lightroom Classic 打开。2.9.0 提供 Windows 安装与注册包，以及 macOS Apple Silicon / Intel 独立构建包；Mac 桌面与 Adobe 宿主的人工验收范围见下文。
+轻量 RAW/JPEG 选片器，使用 Rust 开发，可独立运行，也可从 Adobe Bridge 和 Lightroom Classic 打开。2.10.0 提供 Windows 安装与注册包，以及 macOS Apple Silicon / Intel 独立构建包；Mac 桌面与 Adobe 宿主的人工验收范围见下文。
 
 A fast RAW/JPEG photo culler with local RAW development, Adobe Bridge and Lightroom Classic integration. Windows installer and separate Apple Silicon / Intel macOS packages.
 
 macOS 的构建、安装和验证范围见 [macOS 说明](docs/MACOS.md)。下述安装包和快捷键说明针对 Windows。
 
-**独立 RAW 编辑窗口**：支持 ARW/NEF/DNG，使用本地 LibRaw 显影和 sRGB 预览，编辑曝光、白平衡、七项基础调整、裁切与星级。编辑期间锁定主选片器，关闭编辑窗口时自动保存 XMP；保存失败保留草稿供重试。无需安装或启动 Adobe 软件。采用线性浮点显影与机型 DCP 配置文件，曝光和七项基础调整实时预览；默认色调及滑块模型与 LR/ACR 仍有差异，蒙版等未支持设置保留在 XMP 中；用法、性能策略和验证边界见 [RAW 编辑说明](docs/RAW-EDITING.md)。请更新到 2.9.0 或更新版本以使用这些功能。
+**Windows 图形后端**使用 DirectX 12，优先选择 NVIDIA GPU。主选片器、曝光预览和独立 RAW 编辑窗口均使用 DirectX。迁移与验证范围见 [RAW DirectX 记录](docs/diagnostics/RAW-DIRECTX-2026-11-02.md)，故障对照见 [NVIDIA 图形后端记录](docs/diagnostics/FASTCULL-NVIDIA-2026-11-02.md)。
+
+**相机配置与 macOS 适配**：未显式指定 XMP 配置时优先读取 DNG 内嵌配置，再回退机型对应的本机 DCP 或相机矩阵；保留实际来源提示。macOS 使用 Metal，并标记 sRGB 图层供系统颜色匹配。两个架构的发布构建与自动验证以同一版本标签的 Actions 为准，人工 Adobe 宿主验收范围见 [macOS 说明](docs/MACOS.md)。
+
+**独立 RAW 编辑窗口**：支持 ARW/NEF/DNG，编辑曝光、白平衡、七项基础调整、裁切与星级。配置文件下拉框列出照片实际内嵌项和本机机型匹配项；DNG 首次编辑默认 Adobe Color，已保存的选择继续保留。编辑期间锁定主选片器，关闭时自动保存 XMP，失败保留草稿。基本显影不依赖 Adobe 软件；Adobe Color 读取本机已安装的配置资源，运行时不需要启动 Photoshop。线性浮点预览使用 NVIDIA DirectX / macOS Metal；色调及滑块模型与 LR/ACR 仍有差异，蒙版等未支持设置保留在 XMP 中。见 [RAW 编辑说明](docs/RAW-EDITING.md)。
 
 ## 下载与安装
 
@@ -17,7 +21,7 @@ macOS 的构建、安装和验证范围见 [macOS 说明](docs/MACOS.md)。下�
 - `SHA256SUMS.txt`：下载文件的 SHA-256 校验值。`FastCull-Source-版本.zip` 是供开发者使用的源码。
 - macOS 分别下载 `FastCull-版本-macos-arm64.zip`（Apple Silicon）或 `FastCull-版本-macos-x86_64.zip`（Intel），各自有 `.sha256`。包内 `scripts/install-macos.command` 可安装应用并注册 Bridge/LR；仅独立使用可直接复制应用。Mac 包仅做 ad-hoc 签名，未做 Apple 公证。
 
-需要 Windows 10/11 x64，以及支持 OpenGL 3.3 的显卡驱动。用户无需安装 Rust、Python、LibRaw、PowerShell 7 或 Imaging Edge。当前安装包未做代码签名，Windows 可能显示“未知发布者”；请核对下载来源及校验值。
+需要 Windows 10/11 x64 及 DirectX 12 驱动。用户无需安装 Rust、Python、LibRaw、PowerShell 7 或 Imaging Edge。当前安装包未做代码签名，Windows 可能显示“未知发布者”；请核对下载来源及校验值。
 
 安装前退出 FastCull、Bridge 和 Lightroom Classic。安装程序默认仅安装给当前 Windows 用户，不需要管理员权限。安装界面目前为英文，选片器及使用说明为中文。
 
@@ -43,7 +47,8 @@ macOS 的构建、安装和验证范围见 [macOS 说明](docs/MACOS.md)。下�
 - 支持星级、旗标、颜色及拍摄元数据筛选；支持曝光快速调整和双图独立/联动查看。
 - 100% 查看支持点击位置放大，切图保留相对查看位置。
 - **T / 裁切**：自由与固定比例裁切、自定义比例预设、角度微调及 90° 旋转；编辑结果保存在 XMP，移动照片时一起携带。详见 [裁切说明](docs/CROPPING.md)。
-- **RAW 编辑**：在独立窗口调整曝光、白平衡、对比度、高光、阴影、白色、黑色、自然饱和度和饱和度；滚轮围绕鼠标缩放、拖动平移，双击或 Z 切换适屏 / 100%，放大时按需加载全尺寸。灰点吸管给出可微调的估计值，保存后可通过 XMP 与 LR/ACR 交换参数。
+- **RAW 编辑**：在独立窗口调整曝光、白平衡、对比度、高光、阴影、白色、黑色、自然饱和度和饱和度；与选片一致，单击居中放大至 100%、再次单击返回适配，拖动平移；保留滚轮缩放和 F / Z 切换，放大时按需加载全尺寸。灰点吸管给出可微调的估计值，保存后可通过 XMP 与 LR/ACR 交换参数。
+- **对焦点显示**：选片、对比与 RAW 编辑均可点击“对焦点”按钮或按 O，显示相机记录的位置或区域，随旋转、裁切和缩放对齐。可用范围见 [对焦点说明](docs/FOCUS-POINTS.md)。
 - 载入已有裁切：LR 插件直接读取目录中的裁切与旋转（无需预先保存 XMP）；Bridge/独立打开读取 RAW 旁车或 JPEG 内嵌 XMP 中已保存的裁切。
 - 从 LR 打开后选择 **同步全部并关闭**，自动同步本次修改的星级、色标、旗标、曝光、白平衡、基础调整、裁切和旋转；失败保留重试，其他显影设置不变。详见 [退出同步说明](docs/LR-SYNC.md) 及 [RAW 编辑说明](docs/RAW-EDITING.md)。
 - 退出时可确认同步评分。Bridge/独立版使用 RAW 旁车 XMP 或 JPEG 内嵌 XMP；LR 会话可将修改同步回目录。

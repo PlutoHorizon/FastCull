@@ -27,6 +27,8 @@ pub struct ArwInfo {
     pub thumbnail: JpegRef,
     /// Bounded, uncompressed RGB8 DNG thumbnail, in sensor orientation.
     pub bitmap_thumbnail: Option<BitmapRef>,
+    /// A rendered RGB JPEG XL DNG preview, separate from camera-space RAW tiles.
+    pub jxl_preview: bool,
     pub orientation: u16,
     pub summary: String,
     pub capture: CaptureMetadata,
@@ -159,6 +161,7 @@ impl ArwInfo {
                 preview: whole.clone(),
                 thumbnail: whole.clone(),
                 bitmap_thumbnail: None,
+                jxl_preview: false,
                 orientation: 1,
                 summary: String::new(),
                 capture: CaptureMetadata::default(),
@@ -303,6 +306,7 @@ impl ArwInfo {
             preview,
             thumbnail,
             bitmap_thumbnail: None,
+            jxl_preview: false,
             orientation,
             summary: summary.join("  "),
             raw_size: None,

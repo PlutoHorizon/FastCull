@@ -1,0 +1,307 @@
+{
+  "date": "2026-11-03",
+  "status": "windows-validated-and-installed",
+  "pipeline": "scene-prophoto-v3-enhanced-area",
+  "float_cache_version": 2,
+  "tests": {
+    "passed": 276,
+    "ignored": 3,
+    "gpu_ignored_test_separately_passed": true,
+    "windows_clippy_warnings_denied": true,
+    "release_build": true,
+    "source_manifest": true,
+    "real_pointer_profile_menu_selection": true,
+    "legacy_xmp_compatibility": true
+  },
+  "gpu": {
+    "adapter": "NVIDIA GeForce RTX 4080 Laptop GPU",
+    "backend": "Dx12",
+    "color_cases": 78,
+    "pixels_per_case": 64,
+    "mirrored_uv_and_srgb_target": true,
+    "max_channel_tolerance_8bit": 1.1
+  },
+  "mac": {
+    "apple_silicon_all_targets_clippy": true,
+    "intel_all_targets_check": true,
+    "wgsl_to_msl_2_0_real_bindings": true,
+    "entry_points": 3,
+    "msl_bytes": 17577,
+    "runtime_verified": false,
+    "binary_produced": false,
+    "user_has_mac": false
+  },
+  "acr": {
+    "acr_response": "OK\t1280\t853\tsRGB IEC61966-2.1\t6\t856\t3\t238\t354\t5500\t0",
+    "profile": "Adobe Color",
+    "look_table_id": "E1095149FDB39D7A057BAB208837E2E1",
+    "production_vs_full_reference_mae": 0.0,
+    "source_sha256": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b",
+    "packet_sha256": "46d0452f68f382a132b85af30f88b11f05a5dcac17df670884bc068255d091e1",
+    "reference_sha256": "abf486b6e1b9a8e19fa06de0c86552836b7a0248ee3832928a37957303b64f22"
+  },
+  "comparisons": [
+    {
+      "format": "arw",
+      "profile": "Adobe Standard",
+      "variant": "base",
+      "before": {
+        "mae_rgb_8bit": 4.385810004340278,
+        "p95_abs_rgb_8bit": 11.0
+      },
+      "current": {
+        "mae_rgb_8bit": 4.578965928819445,
+        "p95_abs_rgb_8bit": 12.0
+      },
+      "native": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0\nSIZE\t853\t1280\n",
+      "source_sha256": "1263b3a29e67216ffaae0fd82c1c569b3dc6a9443c1b10a7da17a33feedcb622",
+      "reference_sha256": "1f4047ca437f94ab05e77b40b1b4100fc902d77545209897dddd160a9f6f369f",
+      "output_sha256": "e649de951b884d5c7019213d7beacc46cf5585f1dc718189d59d6587f6939aef"
+    },
+    {
+      "format": "arw",
+      "profile": "Adobe Standard",
+      "variant": "warm",
+      "before": {
+        "mae_rgb_8bit": 4.668185763888889,
+        "p95_abs_rgb_8bit": 12.0
+      },
+      "current": {
+        "mae_rgb_8bit": 4.825724283854167,
+        "p95_abs_rgb_8bit": 13.0
+      },
+      "native": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0\nSIZE\t853\t1280\n",
+      "source_sha256": "1263b3a29e67216ffaae0fd82c1c569b3dc6a9443c1b10a7da17a33feedcb622",
+      "reference_sha256": "3adfd0b1d5161fa4b34d6ec9f6cee1cb353754880173c62fb3b7081ebdfe3546",
+      "output_sha256": "6f3f66a5c5cc8b60eda3ee218fe76acd2c54989e86facf8dea82f19b6f4bc1b4"
+    },
+    {
+      "format": "arw",
+      "profile": "Adobe Standard",
+      "variant": "bright",
+      "before": {
+        "mae_rgb_8bit": 5.055731879340278,
+        "p95_abs_rgb_8bit": 12.0
+      },
+      "current": {
+        "mae_rgb_8bit": 5.121907552083333,
+        "p95_abs_rgb_8bit": 13.0
+      },
+      "native": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0\nSIZE\t853\t1280\n",
+      "source_sha256": "1263b3a29e67216ffaae0fd82c1c569b3dc6a9443c1b10a7da17a33feedcb622",
+      "reference_sha256": "77411b49d4ca2b7d29c4e16afd2e922ee48d29d97e02d1669f1d5598c8e67ca6",
+      "output_sha256": "43278ce67362153084a56fce4f64d2fadf25fdb707afafaca9712349c08b207e"
+    },
+    {
+      "format": "nef",
+      "profile": "Adobe Standard",
+      "variant": "base",
+      "before": {
+        "mae_rgb_8bit": 1.4767659505208333,
+        "p95_abs_rgb_8bit": 3.0
+      },
+      "current": {
+        "mae_rgb_8bit": 1.5514729817708333,
+        "p95_abs_rgb_8bit": 3.0
+      },
+      "native": "PROFILE\tAdobe Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "source_sha256": "5922721d13f11795557d97fdeb0a60b900086c402bc82a848ff280d15b99ffd4",
+      "reference_sha256": "7413bbdf3f7c674945e0efb397ba9e622b3843c96935daad65f63e966bd2f4a8",
+      "output_sha256": "2cffe4266152e88492b3d0e8bb449f064236ba36e2de36d6e026a65c157e5e78"
+    },
+    {
+      "format": "nef",
+      "profile": "Adobe Standard",
+      "variant": "warm",
+      "before": {
+        "mae_rgb_8bit": 1.4873318142361112,
+        "p95_abs_rgb_8bit": 3.0
+      },
+      "current": {
+        "mae_rgb_8bit": 1.5523274739583333,
+        "p95_abs_rgb_8bit": 3.0
+      },
+      "native": "PROFILE\tAdobe Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "source_sha256": "5922721d13f11795557d97fdeb0a60b900086c402bc82a848ff280d15b99ffd4",
+      "reference_sha256": "24b64fc1b29618c76929346c1e863f7d72cc4231c555572c5ffe20b8ba702242",
+      "output_sha256": "0ff1cd1496e46bdc3c321ed1e1741c475b1c17b5c66f45bf5e668d2cbf9ef381"
+    },
+    {
+      "format": "nef",
+      "profile": "Adobe Standard",
+      "variant": "bright",
+      "before": {
+        "mae_rgb_8bit": 1.6232774522569444,
+        "p95_abs_rgb_8bit": 3.0
+      },
+      "current": {
+        "mae_rgb_8bit": 1.7153591579861112,
+        "p95_abs_rgb_8bit": 3.0
+      },
+      "native": "PROFILE\tAdobe Standard · D3S\nWARNING\t\nBASELINE\t0\nSIZE\t1280\t852\n",
+      "source_sha256": "5922721d13f11795557d97fdeb0a60b900086c402bc82a848ff280d15b99ffd4",
+      "reference_sha256": "913417f09d926dd5470a5649463b4c98d7fa8195adda3cb5ed3a011f607f3b81",
+      "output_sha256": "9380da22c443433d2a1edefb2f0586950b4a297c402ff4e5a0cd1972efbe9912"
+    },
+    {
+      "format": "dng",
+      "profile": "Adobe Standard",
+      "variant": "base",
+      "before": {
+        "mae_rgb_8bit": 3.3853895399305554,
+        "p95_abs_rgb_8bit": 7.0
+      },
+      "current": {
+        "mae_rgb_8bit": 3.4794243706597223,
+        "p95_abs_rgb_8bit": 7.0
+      },
+      "native": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "source_sha256": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b",
+      "reference_sha256": "7106054d63ab5710ae1b430e1059a75d5781e27996ff6e3558f3f65a01e91f98",
+      "output_sha256": "94049d9a82e8d23992290b9130ebb6c33cef5c266febec05c18e034f3fdfe68b"
+    },
+    {
+      "format": "dng",
+      "profile": "Adobe Standard",
+      "variant": "warm",
+      "before": {
+        "mae_rgb_8bit": 3.420138888888889,
+        "p95_abs_rgb_8bit": 7.0
+      },
+      "current": {
+        "mae_rgb_8bit": 3.5158284505208335,
+        "p95_abs_rgb_8bit": 7.0
+      },
+      "native": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "source_sha256": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b",
+      "reference_sha256": "cc5e0ad217f360dcf10e35f8ec50c58325c6d7677480d95ed61291d75d85eedf",
+      "output_sha256": "d94c76b015240817798257b44d0279fb8b9ddecebb95bed68d8de22247469a0d"
+    },
+    {
+      "format": "dng",
+      "profile": "Adobe Standard",
+      "variant": "bright",
+      "before": {
+        "mae_rgb_8bit": 2.9322509765625,
+        "p95_abs_rgb_8bit": 7.0
+      },
+      "current": {
+        "mae_rgb_8bit": 3.0504828559027777,
+        "p95_abs_rgb_8bit": 7.0
+      },
+      "native": "PROFILE\tAdobe Standard · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "source_sha256": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b",
+      "reference_sha256": "74f9444619c64bfc9e4ceaa0accf6ff7af5ec45cf3672290699e02adf053e7df",
+      "output_sha256": "a7d6e33ba839fcf465663d1f9aeeb0bac07d9445a8c9a81e4dcf57c57878c250"
+    },
+    {
+      "format": "dng",
+      "profile": "Adobe Color",
+      "variant": "base",
+      "current": {
+        "mae_rgb_8bit": 3.7337239583333335,
+        "p95_abs_rgb_8bit": 7.0
+      },
+      "native": "PROFILE\tAdobe Color · ILCE-6700\nWARNING\t\nBASELINE\t0.1\nSIZE\t1280\t853\n",
+      "source_sha256": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b",
+      "output_sha256": "87e8bf8878d0be8040a9a80dad450983454f077a5ed9f95c44072ae7b7161962",
+      "packet_sha256": "46d0452f68f382a132b85af30f88b11f05a5dcac17df670884bc068255d091e1"
+    }
+  ],
+  "comparison_notes": {
+    "method": "sRGB RGB code-value MAE after common Pillow bicubic resize to 192x128; no per-image fit",
+    "same_acr_adobe_color_reference_old_standard_output_mae": 5.739366319444445,
+    "same_reference_current_color_mae": 3.7337239583333335,
+    "not_acr_pixel_equivalence": true,
+    "area_sampling_improves_antialiasing_but_standard_sample_mae_slightly_increased": true
+  },
+  "gui": [
+    {
+      "case": "arw-camera",
+      "format": "arw",
+      "profile": "Camera ST",
+      "elapsed_seconds": 12.53,
+      "source_sha256": "1263b3a29e67216ffaae0fd82c1c569b3dc6a9443c1b10a7da17a33feedcb622",
+      "source_unchanged": true,
+      "dng_payload_unchanged": false,
+      "screenshots": 4,
+      "both_windows_nvidia_dx12": true,
+      "parent_alive_after_save": true,
+      "result": "saved=true exposure=500000 white_balance=Some(WhiteBalanceSettings { mode: Some(\"Custom\"), temperature: Some(4850), tint: Some(17) }) profile=Some(\"Camera ST\") full=true status=已保存显影调整 · sRGB basic=BasicAdjustments { contrast: Some(20), highlights: Some(-35), shadows: Some(25), whites: Some(15), blacks: Some(-10), vibrance: Some(20), saturation: Some(10) }",
+      "exe_sha256": "37494eb69d7ccf84ca343745108a0de163bd63685acb27124ec622f3bb12a06b"
+    },
+    {
+      "case": "nef-camera",
+      "format": "nef",
+      "profile": "Camera Standard",
+      "elapsed_seconds": 7.55,
+      "source_sha256": "5922721d13f11795557d97fdeb0a60b900086c402bc82a848ff280d15b99ffd4",
+      "source_unchanged": true,
+      "dng_payload_unchanged": false,
+      "screenshots": 4,
+      "both_windows_nvidia_dx12": true,
+      "parent_alive_after_save": true,
+      "result": "saved=true exposure=500000 white_balance=Some(WhiteBalanceSettings { mode: Some(\"Custom\"), temperature: Some(4850), tint: Some(17) }) profile=Some(\"Camera Standard\") full=true status=已保存显影调整 · sRGB basic=BasicAdjustments { contrast: Some(20), highlights: Some(-35), shadows: Some(25), whites: Some(15), blacks: Some(-10), vibrance: Some(20), saturation: Some(10) }",
+      "exe_sha256": "37494eb69d7ccf84ca343745108a0de163bd63685acb27124ec622f3bb12a06b"
+    },
+    {
+      "case": "dng-default",
+      "format": "dng",
+      "profile": "Adobe Color",
+      "elapsed_seconds": 12.52,
+      "source_sha256": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b",
+      "source_unchanged": true,
+      "dng_payload_unchanged": true,
+      "screenshots": 4,
+      "both_windows_nvidia_dx12": true,
+      "parent_alive_after_save": true,
+      "result": "saved=true exposure=1250000 white_balance=Some(WhiteBalanceSettings { mode: Some(\"Custom\"), temperature: Some(4850), tint: Some(17) }) profile=Some(\"Adobe Color\") full=true status=已保存显影调整 · sRGB basic=BasicAdjustments { contrast: Some(20), highlights: Some(-35), shadows: Some(25), whites: Some(15), blacks: Some(-10), vibrance: Some(20), saturation: Some(10) }",
+      "exe_sha256": "37494eb69d7ccf84ca343745108a0de163bd63685acb27124ec622f3bb12a06b"
+    },
+    {
+      "case": "dng-embedded",
+      "format": "dng",
+      "profile": "Embedded",
+      "elapsed_seconds": 9.81,
+      "source_sha256": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b",
+      "source_unchanged": true,
+      "dng_payload_unchanged": true,
+      "screenshots": 4,
+      "both_windows_nvidia_dx12": true,
+      "parent_alive_after_save": true,
+      "result": "saved=true exposure=1250000 white_balance=Some(WhiteBalanceSettings { mode: Some(\"Custom\"), temperature: Some(4850), tint: Some(17) }) profile=Some(\"Embedded\") full=true status=已保存显影调整 · sRGB basic=BasicAdjustments { contrast: Some(20), highlights: Some(-35), shadows: Some(25), whites: Some(15), blacks: Some(-10), vibrance: Some(20), saturation: Some(10) }",
+      "exe_sha256": "37494eb69d7ccf84ca343745108a0de163bd63685acb27124ec622f3bb12a06b"
+    }
+  ],
+  "installed_gui": [
+    {
+      "case": "dng-installed",
+      "format": "dng",
+      "profile": "Adobe Color",
+      "elapsed_seconds": 14.09,
+      "source_sha256": "d7556912a76b95ff7c385e52a060b30a52ba42d9f5062ef4a621c0d5e50ac88b",
+      "source_unchanged": true,
+      "dng_payload_unchanged": true,
+      "screenshots": 4,
+      "both_windows_nvidia_dx12": true,
+      "parent_alive_after_save": true,
+      "result": "saved=true exposure=1250000 white_balance=Some(WhiteBalanceSettings { mode: Some(\"Custom\"), temperature: Some(4850), tint: Some(17) }) profile=Some(\"Adobe Color\") full=true status=已保存显影调整 · sRGB basic=BasicAdjustments { contrast: Some(20), highlights: Some(-35), shadows: Some(25), whites: Some(15), blacks: Some(-10), vibrance: Some(20), saturation: Some(10) }",
+      "exe_sha256": "37494eb69d7ccf84ca343745108a0de163bd63685acb27124ec622f3bb12a06b"
+    }
+  ],
+  "installation": {
+    "backup": "backups/2026-11-03-profiles-122033",
+    "installed": "lrplugins/FastCull.lrplugin/fastcull.exe",
+    "old_sha256": "9e2280794c2496fe71cf3defd6d2f042cbb6035a3f26a57af80ee1e9591a238b",
+    "new_sha256": "37494eb69d7ccf84ca343745108a0de163bd63685acb27124ec622f3bb12a06b",
+    "raw_dll_sha256": "870e78601ddd9340342406eadc041e2a73947cf331649419fd46f2e6fd0585c6",
+    "raw_dll_unchanged": true,
+    "license_packages": 208
+  },
+  "probe_sha256": "e5abb668972d8a0e866b9495dee042e56d4057739d387d270e3f902bc71676a7",
+  "environment_notes": [
+    "Windows directory-junction tests run outside sandbox.",
+    "One atomic-file test transiently returned access denied; isolated and complete suite reruns passed without weakening assertions."
+  ],
+  "private_data_not_distributed": true
+}

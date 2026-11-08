@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use eframe::egui::Vec2;
 
-pub const PIPELINE_VERSION: &str = "scene-prophoto-v1";
+pub const PIPELINE_VERSION: &str = "scene-prophoto-v3-enhanced-area";
 pub const PROPHOTO_TO_XYZ: Matrix = [
     [0.7976749, 0.1351917, 0.0313534],
     [0.2880402, 0.7118741, 0.0000857],
@@ -24,6 +24,7 @@ const SRGB_TO_XYZ: Matrix = [
 #[derive(Clone)]
 pub struct Recipe {
     pub look: Option<HsvMap>,
+    pub extra_look: Option<HsvMap>,
     pub curve: Vec<f32>,
     pub baseline_exposure: f32,
 }
@@ -157,27 +158,73 @@ fn camera_calibration(profile: &Profile, w: f64) -> Matrix {
 pub fn find_profile(make: &str, model: &str, name: &str) -> Result<Option<Profile>> {
     dcp::find(&format!("{make} {model}"), name)
 }
-pub fn requested_profile(values: &Values) -> &str {
-    values.camera_profile.as_deref().unwrap_or("Adobe Standard")
+/// An explicit XMP profile wins; otherwise prefer the primary profile in a DNG.
+/// Other RAW formats usually contain camera matrices, not a complete Adobe DCP.
+pub fn find_profile_for_source(
+    path: &std::path::Path,
+    make: &str,
+    model: &str,
+    values: &Values,
+) -> Result<Option<Profile>> {
+    let name = requested_profile(values);
+    if std::env::var_os("FASTCULL_DCP_PROFILE").is_some() {
+        return find_profile(make, model, name);
+    }
+    let embedded = dcp::read_embedded(path);
+    if let Ok(profiles) = &embedded {
+        let selected = if let Some(requested) = values
+            .look_name
+            .as_deref()
+            .or(values.camera_profile.as_deref())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            profiles.iter().find(|p| {
+                p.name.eq_ignore_ascii_case(requested)
+                    || requested.eq_ignore_ascii_case("Embedded")
+                    || requested.eq_ignore_ascii_case("Embedded Camera Profile")
+            })
+        } else {
+            profiles.first()
+        };
+        if let Some(profile) = selected {
+            let mut profile = profile.clone();
+            profile.requested_name = values.camera_profile.clone();
+            return Ok(Some(profile));
+        }
+    }
+    let mut profile = find_profile(make, model, name)?;
+    if let (Some(profile), Err(error)) = (&mut profile, embedded) {
+        profile.warning = Some(format!(
+            "读取 DNG 内嵌配置失败：{error}；当前使用 {}",
+            profile.name
+        ));
+        profile.fallback = true;
+    }
+    Ok(profile)
 }
-/// Sparse monotone approximation of the public classic SDR rendering curve.
-/// Numerical landmarks sampled from Adobe's public dng_render.cpp; this local
-/// baseline is not a reproduction of current Lightroom ProcessVersion tone.
+pub fn prepare_from_path(
+    path: &std::path::Path,
+    source: LinearDeveloped,
+    values: &Values,
+    max_edge: u32,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Frame> {
+    let profile = find_profile_for_source(path, &source.make, &source.model, values)?;
+    prepare_using_profile(source, values, max_edge, profile, cancelled)
+}
+pub fn requested_profile(values: &Values) -> &str {
+    values
+        .look_name
+        .as_deref()
+        .or(values.camera_profile.as_deref())
+        .unwrap_or("Adobe Standard")
+}
+/// Public SDK classic SDR reference with its full 1025 samples. Modern ACR
+/// process-version adjustments remain a separate, proprietary rendering stage.
 pub fn default_tone() -> ToneCurve {
-    ToneCurve::new(vec![
-        [0., 0.],
-        [0.01, 0.0083],
-        [0.03, 0.0377472],
-        [0.06, 0.0987448],
-        [0.12, 0.2468688],
-        [0.18, 0.3880856],
-        [0.3, 0.597212],
-        [0.5, 0.80486],
-        [0.75, 0.93986],
-        [0.9, 0.982656],
-        [1., 1.],
-    ])
-    .expect("compiled monotone SDR curve")
+    ToneCurve::from_samples(&crate::adobe_tone_curve::CLASSIC_SDR)
+        .expect("compiled public SDR reference")
 }
 fn normalized_forward(m: Matrix) -> Result<Matrix> {
     let white = wb::apply(m, [1.; 3]);
@@ -189,6 +236,20 @@ fn normalized_forward(m: Matrix) -> Result<Matrix> {
         wb::diagonal(std::array::from_fn(|i| wb::D50[i] / white[i])),
         m,
     ))
+}
+fn normalized_color(m: Matrix) -> Result<Matrix> {
+    let white = wb::apply(m, wb::D50);
+    let maximum = white.into_iter().fold(f64::NEG_INFINITY, f64::max);
+    ensure!(
+        maximum.is_finite() && maximum > 1e-9,
+        "DCP 色彩矩阵白点无效"
+    );
+    let scale = if (0.99..=1.01).contains(&maximum) {
+        1.
+    } else {
+        1. / maximum
+    };
+    Ok(m.map(|row| row.map(|v| (v * scale * 10000.).round() / 10000.)))
 }
 pub fn prepare(
     source: LinearDeveloped,
@@ -204,9 +265,17 @@ pub fn prepare_using_profile(
     mut source: LinearDeveloped,
     values: &Values,
     max_edge: u32,
-    profile: Option<Profile>,
+    mut profile: Option<Profile>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Frame> {
+    if let Some(profile) = &mut profile {
+        // Normalize the two calibrations before interpolation; a relative
+        // matrix scale must not change the interpolated white point.
+        profile.color = [
+            normalized_color(profile.color[0])?,
+            normalized_color(profile.color[1])?,
+        ];
+    }
     ensure!(
         source.width > 0
             && source.height > 0
@@ -293,7 +362,7 @@ pub fn prepare_using_profile(
         let neutral = desired.map(|x| 1. / x);
         let to_xyz = match (profile.forward[0], profile.forward[1]) {
             (Some(a), Some(b)) => {
-                let fm = normalized_forward(wb::interpolate(a, b, w))?;
+                let fm = wb::interpolate(normalized_forward(a)?, normalized_forward(b)?, w);
                 let ref_neutral = wb::apply(inv_cc, neutral);
                 ensure!(
                     ref_neutral.iter().all(|x| *x > 1e-7),
@@ -338,14 +407,28 @@ pub fn prepare_using_profile(
         };
         hsm = profile.hue_sat_at(temperature)?;
         let curve = profile.tone.clone().unwrap_or_else(default_tone);
+        let curve_values = (0..4096)
+            .map(|i| {
+                let v = curve.eval(i as f32 / 4095.);
+                profile
+                    .enhanced_tone
+                    .as_ref()
+                    .map_or(v, |t| t.eval(v.powf(1. / 2.2)).powf(2.2))
+            })
+            .collect();
         (
             wb::mul(xyz_to_prophoto, to_xyz),
             Recipe {
                 look: profile.look.clone(),
-                curve: (0..4096).map(|i| curve.eval(i as f32 / 4095.)).collect(),
+                extra_look: profile.extra_look.clone(),
+                curve: curve_values,
                 baseline_exposure: source.baseline_exposure as f32 + profile.baseline_exposure,
             },
-            format!("{} · {}", profile.name, source.model),
+            if profile.embedded {
+                format!("{} · 内嵌 · {}", profile.name, source.model)
+            } else {
+                format!("{} · {}", profile.name, source.model)
+            },
             profile.warning.clone(),
             profile.fingerprint,
             Some(profile.color),
@@ -371,6 +454,7 @@ pub fn prepare_using_profile(
             ),
             Recipe {
                 look: None,
+                extra_look: None,
                 curve: (0..4096).map(|i| curve.eval(i as f32 / 4095.)).collect(),
                 baseline_exposure: source.baseline_exposure as f32,
             },
@@ -429,6 +513,22 @@ pub fn prepare_using_profile(
         .checked_mul(output[1])
         .context("线性预览尺寸溢出")?;
     ensure!(count <= 160_000_000, "线性预览超出像素限制");
+    // Integrate the sensor footprint before geometric sampling. Four-point
+    // point sampling aliases fine colour/noise when a RAW is reduced severalfold.
+    if scale < 0.75 {
+        let reduced = [
+            (source.width as f32 * scale).ceil().max(1.) as usize,
+            (source.height as f32 * scale).ceil().max(1.) as usize,
+        ];
+        source.rgb = area_reduce(
+            &source.rgb,
+            [source.width, source.height],
+            reduced,
+            cancelled,
+        )?;
+        source.width = reduced[0];
+        source.height = reduced[1];
+    }
     let direct = !crop.enabled && orientation == 1 && output == [source.width, source.height];
     let mut pixels = Vec::new();
     pixels.try_reserve_exact(count)?;
@@ -493,9 +593,73 @@ pub fn prepare_using_profile(
     })
 }
 
+fn area_reduce(
+    pixels: &[[f32; 3]],
+    size: [usize; 2],
+    target: [usize; 2],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<[f32; 3]>> {
+    ensure!(
+        size[0].checked_mul(size[1]) == Some(pixels.len())
+            && target.iter().all(|v| *v > 0)
+            && target[0] <= size[0]
+            && target[1] <= size[1],
+        "浮点面积缩放尺寸无效"
+    );
+    let step = [
+        size[0] as f64 / target[0] as f64,
+        size[1] as f64 / target[1] as f64,
+    ];
+    let mut out = Vec::with_capacity(target[0] * target[1]);
+    for y in 0..target[1] {
+        if y % 16 == 0 {
+            ensure!(!cancelled(), "线性缩放已取消");
+        }
+        let y0 = y as f64 * step[1];
+        let y1 = (y + 1) as f64 * step[1];
+        for x in 0..target[0] {
+            let x0 = x as f64 * step[0];
+            let x1 = (x + 1) as f64 * step[0];
+            let mut sum = [0f64; 3];
+            for sy in y0.floor() as usize..(y1.ceil() as usize).min(size[1]) {
+                let wy = (y1.min((sy + 1) as f64) - y0.max(sy as f64)).max(0.);
+                for sx in x0.floor() as usize..(x1.ceil() as usize).min(size[0]) {
+                    let w = wy * (x1.min((sx + 1) as f64) - x0.max(sx as f64)).max(0.);
+                    for (c, v) in sum.iter_mut().enumerate() {
+                        *v += f64::from(pixels[sy * size[0] + sx][c]) * w;
+                    }
+                }
+            }
+            out.push(sum.map(|v| (v / (step[0] * step[1])) as f32));
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn area_sampling_preserves_hdr_mean_and_cancels() {
+        let p = vec![[0., -1., 2.], [4., 1., 4.], [4., 1., 4.], [0., -1., 2.]];
+        assert_eq!(
+            area_reduce(&p, [2, 2], [1, 1], &|| false).unwrap(),
+            vec![[2., 0., 3.]]
+        );
+        assert!(area_reduce(&p, [2, 2], [1, 1], &|| true).is_err());
+        let p = vec![[0., 0., 0.], [0., 0., 0.], [6., 6., 6.]];
+        assert_eq!(
+            area_reduce(&p, [3, 1], [2, 1], &|| false).unwrap(),
+            vec![[0.; 3], [4.; 3]]
+        );
+    }
+    #[test]
+    fn color_normalization_removes_calibration_scale_before_interpolation() {
+        let a = [[0.5, 0., 0.], [0., 0.5, 0.], [0., 0., 0.5]];
+        assert_eq!(normalized_color(a).unwrap(), wb::IDENTITY);
+        assert_eq!(normalized_color(wb::IDENTITY).unwrap(), wb::IDENTITY);
+        assert!(normalized_color([[0.; 3]; 3]).is_err());
+    }
     #[test]
     fn tone_landmarks_are_monotone_and_do_not_change_white_or_black() {
         let c = default_tone();

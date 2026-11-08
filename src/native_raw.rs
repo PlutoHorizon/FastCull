@@ -326,6 +326,8 @@ mod desktop {
         settings: &DevelopSettings,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Developed> {
+        let source = crate::dng::jxl_native_source(path, cancelled)?;
+        let path = source.as_ref().map_or(path, |f| f.as_ref().as_ref());
         let lib = library()?;
         let develop = lib
             .develop
@@ -407,6 +409,8 @@ mod desktop {
         settings: &DevelopSettings,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<LinearDeveloped> {
+        let source = crate::dng::jxl_native_source(path, cancelled)?;
+        let path = source.as_ref().map_or(path, |f| f.as_ref().as_ref());
         let lib = library()?;
         let develop = lib
             .develop_linear
@@ -545,6 +549,8 @@ mod desktop {
         Ok(std::ffi::CString::new(path.as_os_str().as_bytes())?)
     }
     pub fn read(path: &Path) -> Result<ArwInfo> {
+        let source = crate::dng::jxl_native_source(path, &|| false)?;
+        let path = source.as_ref().map_or(path, |f| f.as_ref().as_ref());
         let lib = library()?;
         let mut info = Info::default();
         let mut error = [0u8; 256];
@@ -579,6 +585,7 @@ mod desktop {
             preview: jpeg.clone(),
             thumbnail: jpeg,
             bitmap_thumbnail: None,
+            jxl_preview: false,
             orientation: info.orientation as u16,
             summary,
             capture,
@@ -587,6 +594,8 @@ mod desktop {
         })
     }
     fn frame(path: &Path, full: bool) -> Result<OwnedFrame> {
+        let source = crate::dng::jxl_native_source(path, &|| false)?;
+        let path = source.as_ref().map_or(path, |f| f.as_ref().as_ref());
         let lib = library()?;
         let mut frame = Frame::default();
         let mut error = [0u8; 256];
@@ -647,14 +656,15 @@ mod desktop {
                     rgba.extend([p[0], p[1], p[2], 255]);
                 }
             }
-            crate::imaging::resize_level(
-                Pixels {
-                    width: frame.width as usize,
-                    height: frame.height as usize,
-                    rgba,
-                },
-                level,
-            )?
+            let mut pixels = Pixels {
+                width: frame.width as usize,
+                height: frame.height as usize,
+                rgba,
+            };
+            if frame.rendered != 0 {
+                crate::dng::jxl_mask(path, &mut pixels)?;
+            }
+            crate::imaging::resize_level(pixels, level)?
         };
         if frame.rendered != 0 {
             log::info!(

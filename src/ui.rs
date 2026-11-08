@@ -162,6 +162,7 @@ impl Photo {
     }
 }
 pub struct App {
+    focus_overlay: crate::focus_overlay::Overlay,
     raw_windows: Arc<crate::raw_window::Windows>,
     raw_parent_lock: crate::focus::ParentLock,
     raw_smoke_started: bool,
@@ -307,11 +308,16 @@ impl App {
         session: Option<Arc<Session>>,
     ) -> Self {
         configure(&cc.egui_ctx);
-        Self::from_context(&cc.egui_ctx, cc.gl.as_ref(), paths, session)
+        Self::from_context(
+            &cc.egui_ctx,
+            crate::graphics::exposure_preview(cc),
+            paths,
+            session,
+        )
     }
     fn from_context(
         ctx: &egui::Context,
-        gl: Option<&Arc<eframe::glow::Context>>,
+        exposure_preview: Option<Arc<crate::exposure_preview::Preview>>,
         paths: Vec<PathBuf>,
         session: Option<Arc<Session>>,
     ) -> Self {
@@ -350,6 +356,7 @@ impl App {
         };
         Self {
             folder_editor,
+            focus_overlay: Default::default(),
             raw_windows: crate::raw_window::Windows::new(session.clone()),
             raw_parent_lock: Default::default(),
             raw_smoke_started: false,
@@ -358,7 +365,7 @@ impl App {
             mover: None,
             close_after_moves: false,
             baselines,
-            exposure_preview: gl.map(|g| crate::exposure_preview::Preview::new(g.clone())),
+            exposure_preview,
             compare: None,
             compare_sizes: [Vec2::ZERO; 2],
             compare_ppp: 1.,
@@ -1277,7 +1284,7 @@ impl App {
                     }
                     view = self.compare.as_ref().unwrap().views[side];
                     let actual_zoom = view.zoom;
-                    paint_adjusted(
+                    let screen = paint_adjusted(
                         &painter,
                         &t,
                         area,
@@ -1288,6 +1295,15 @@ impl App {
                         self.source_size(i, actual_zoom > 0.),
                         self.preview_for(i),
                         self.photos[i].values.crop,
+                    );
+                    self.focus_overlay.paint(
+                        &painter,
+                        &self.paths[i],
+                        area,
+                        screen,
+                        source.unwrap_or_else(|| t.size_vec2()),
+                        self.photos[i].orientation(),
+                        self.photos[i].values.crop.unwrap_or_default(),
                     );
                     if view.zoom > 0. && !loaded_full {
                         painter.text(
@@ -1485,6 +1501,7 @@ impl App {
                 self.next(1);
             }
             if !self.grid {
+                self.focus_overlay.control(ui);
                 if let Some(c) = &mut self.compare {
                     ui.checkbox(&mut c.linked, "联动").on_hover_text(
                         "保留各自对准的位置，按相同比例缩放和移动；取消后可分别对准主体",
@@ -1501,11 +1518,12 @@ impl App {
             control_group(ui, 200., |ui| {
                 ui.label("曝光");
                 let baseline = self.photos[self.current].exposure_base;
-                let available = baseline.is_some() && enabled;
+                let available = baseline.is_some() && enabled && self.exposure_preview.is_some();
                 for (label, thirds) in [("−1", -3), ("−⅓", -1), ("+⅓", 1), ("+1", 3)] {
                     if ui
                         .add_enabled(available, egui::Button::new(label).small())
                         .on_hover_text("曝光快调；JPEG 为近似预览，写回 LR 请同步选片会话")
+                        .on_disabled_hover_text("等待有效曝光参数或 GPU 预览")
                         .clicked()
                     {
                         self.adjust_exposure(thirds);
@@ -2022,6 +2040,15 @@ impl App {
                 native,
                 self.preview_for(self.current),
                 self.photos[self.current].values.crop,
+            );
+            self.focus_overlay.paint(
+                &painter,
+                &self.paths[self.current],
+                rect,
+                screen,
+                native.unwrap_or_else(|| t.size_vec2()),
+                self.photos[self.current].orientation(),
+                self.photos[self.current].values.crop.unwrap_or_default(),
             );
             if !self.first_draw {
                 log::info!(
@@ -2827,6 +2854,7 @@ impl eframe::App for App {
         }
         self.receive_moves(ctx);
         self.receive_metadata();
+        self.focus_overlay.shortcut(ctx);
         self.receive_develop();
         self.receive_index();
         if std::env::var_os("FASTCULL_RAW_EDIT_SMOKE_DIR").is_some()
@@ -2932,6 +2960,7 @@ impl eframe::App for App {
                         )
                     })
                     .inner
+                    .on_disabled_hover_text("当前照片暂不能编辑")
                     .clicked()
                 {
                     self.begin_raw(ctx);
@@ -3462,7 +3491,7 @@ fn preload_fonts() {
 // standalone entry point, so a double click does not require command-line input.
 struct Shell {
     app: Option<App>,
-    gl: Option<Arc<eframe::glow::Context>>,
+    preview: Option<Arc<crate::exposure_preview::Preview>>,
     pending: Option<(Option<PathBuf>, Vec<PathBuf>)>,
     receiver: Option<std::sync::mpsc::Receiver<Result<Option<Vec<PathBuf>>>>>,
     error: Option<String>,
@@ -3552,7 +3581,7 @@ impl eframe::App for Shell {
             self.receiver = None;
             match result {
                 Ok(Some(paths)) => {
-                    let mut app = App::from_context(ctx, self.gl.as_ref(), paths, None);
+                    let mut app = App::from_context(ctx, self.preview.clone(), paths, None);
                     // Loading must not start another foreground-stealing window.
                     std::mem::swap(&mut app.startup_focus, &mut self.focus);
                     app.enable_bridge_moves(ctx, crate::logger::directory().join("moves"));
@@ -3651,19 +3680,17 @@ fn run_shell(request: Option<PathBuf>, paths: Vec<PathBuf>) -> Result<()> {
     log::info!("startup native-window begin");
     eframe::run_native(
         "FastCull",
-        eframe::NativeOptions {
-            renderer: eframe::Renderer::Glow,
-            viewport: egui::ViewportBuilder::default()
+        crate::graphics::native_options(
+            egui::ViewportBuilder::default()
                 .with_active(true)
                 .with_inner_size(initial_window_size())
                 .with_min_inner_size([640., 480.]),
-            ..Default::default()
-        },
+        ),
         Box::new(move |cc| {
             configure(&cc.egui_ctx);
             let mut shell = Shell {
                 app: None,
-                gl: cc.gl.clone(),
+                preview: crate::graphics::exposure_preview(cc),
                 pending,
                 receiver: None,
                 error: None,
@@ -3719,14 +3746,12 @@ fn run_session(paths: Vec<PathBuf>, session: Option<Arc<Session>>, bridge: bool)
     let keep_session = session.is_some();
     let windows = crate::raw_window::Windows::new(session.clone());
     let render_windows = windows.clone();
-    let options = eframe::NativeOptions {
-        renderer: eframe::Renderer::Glow,
-        viewport: egui::ViewportBuilder::default()
+    let options = crate::graphics::native_options(
+        egui::ViewportBuilder::default()
             .with_active(true)
             .with_inner_size(initial_window_size())
             .with_min_inner_size([640., 480.]),
-        ..Default::default()
-    };
+    );
     log::info!("startup native-window begin");
     let result = eframe::run_native(
         "FastCull · RAW/JPEG",

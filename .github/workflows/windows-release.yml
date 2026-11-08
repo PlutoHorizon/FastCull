@@ -44,6 +44,8 @@ jobs:
           ./scripts/build-native.ps1
           cargo test --locked
           if ($LASTEXITCODE) { throw 'Rust tests failed' }
+          cargo clippy --locked --all-targets -- -D warnings
+          if ($LASTEXITCODE) { throw 'Clippy failed' }
           cargo build --locked
           if ($LASTEXITCODE) { throw 'Debug build failed' }
           node --test tests/bridge_entry.test.cjs

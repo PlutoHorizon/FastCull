@@ -5,7 +5,7 @@
     var scriptFolder = new File($.fileName).parent;
     var api = {};
     api.isMac = /mac/i.test($.os || "");
-    api.version = "2.9.0";
+    api.version = "2.10.0";
     // Capture roots only; recursive enumeration belongs to the detached Rust
     // process, never to Bridge's menu display callback or metadata API.
     api.collect = function (selected) {
@@ -44,6 +44,17 @@
         return '"' + path + '"';
     };
     api.runCommand = function (command) { return app.system(command); };
+    // The resident Windows helper can launch without Bridge's slow app.system
+    // handoff. A separate lease is a protocol capability check for older helpers.
+    api.nativeLauncherReady = function () {
+        if (api.isMac) { return false; }
+        var ready = new File(Folder.userData.fsName + "/FastCull/hotkeys-bridge/launcher-ready");
+        if (!ready.exists || !ready.open("r")) { return false; }
+        var stamp;
+        try { stamp = Number(ready.read()); } finally { ready.close(); }
+        var age = (new Date()).getTime() - stamp;
+        return stamp > 0 && age >= 0 && age < 3000;
+    };
     api.open = function () {
         var request = null;
         var stage = "读取所选照片";
@@ -88,6 +99,13 @@
                     throw new Error("选片请求写入失败。");
                 }
             } finally { request.close(); }
+            if (api.nativeLauncherReady()) {
+                // Rename only after close: the listener must never observe a
+                // partially written list. These files are data, never executed.
+                stage = "提交原生启动请求";
+                if (!request.rename(name + ".queued")) { throw new Error("无法提交选片请求，请重试。"); }
+                return;
+            }
             // The native helper validates and snapshots the list, starts a detached
             // GUI and returns immediately. No wait for GUI exit, no RAW/XMP parsing.
             stage = "启动 Rust 选片器";
@@ -143,6 +161,12 @@
     };
     api.pollHotkey = function () {
         var directory = new Folder(Folder.userData.fsName + "/FastCull/hotkeys-bridge");
+        var launchError = new File(directory.fsName + "/launch-error");
+        launchError.encoding = "UTF-8";
+        if (launchError.exists && launchError.open("r")) {
+            var message = launchError.read(); launchError.close(); launchError.remove();
+            Window.alert("FastCull\n\n原生启动失败：" + message);
+        }
         var request = new File(directory.fsName + "/request");
         if (request.exists && request.open("r")) {
             var stamp = Number(request.read()); request.close(); request.remove();

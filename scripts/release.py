@@ -22,12 +22,27 @@ PLUGIN_SUPPORT = ['LICENSE', 'THIRD-PARTY-NOTICES.txt']
 LUA = ['Info.lua', 'common.lua', 'develop.lua', 'raw_settings.lua', 'HotkeyInit.lua', 'HotkeyStop.lua',
        'OpenCuller.lua', 'organization.lua', 'PluginInfo.lua', 'sync.lua', 'photo_edits.lua',
        'SyncSelected.lua', 'SyncSidecars.lua']
-SOURCE_FILES = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'LICENSE', 'README.md',
+SOURCE_FILES = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'rust-toolchain.toml', 'LICENSE', 'README.md',
+                'assets/fastcull-master.png', 'assets/fastcull.png',
+                'assets/fastcull.ico', 'assets/fastcull.icns', 'assets/README.md',
                 '.gitignore', '.cargo/config.toml', '.github/workflows/windows-release.yml',
                 '.github/workflows/macos-build.yml',
                 'installer/FastCull.iss', 'docs/DISTRIBUTION.md', 'docs/RELEASE-NOTES.md',
                 'docs/QUICKSTART.txt', 'docs/CROPPING.md', 'docs/LR-SYNC.md', 'docs/MACOS.md',
                 'docs/RAW-EDITING.md', 'docs/DNG.md', 'docs/COLOR-PIPELINE.md',
+                'docs/FOCUS-POINTS.md',
+                'docs/diagnostics/BRIDGE-STARTUP-2026-11-06.md',
+                'docs/diagnostics/FOCUS-AND-RAW-VIEW-2026-11-08.md',
+                'docs/diagnostics/RAW-DIRECTX-2026-11-02.md',
+                'docs/diagnostics/FASTCULL-NVIDIA-2026-11-02.md',
+                'docs/diagnostics/COLOR-EMBEDDED-METAL-2026-11-02.md',
+                'docs/raw-embedded-color-validation-2026-11-02.json',
+                'docs/diagnostics/ACR-COLOR-2026-11-03.md',
+                'docs/acr-color-validation-2026-11-03.json',
+                'docs/diagnostics/RAW-PROFILE-SELECTOR-2026-11-03.md',
+                'docs/diagnostics/DNG-JPEGXL-PANO-2026-11-03.md',
+                'docs/raw-profile-validation-2026-11-03.json',
+                'vendor/ADOBE-DNG-SDK-LICENSE.txt',
                 'docs/CULLER-PERFORMANCE-2026-10-30.md',
                 'docs/RAW-COLOR-INVESTIGATION-2026-10-30.md',
                 'docs/raw-color-calibration-validation-2026-10-30.json',
@@ -38,7 +53,7 @@ SOURCE_FILES = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'LICENSE', 'R
                 'docs/raw-window-validation-2026-10-24.json',
                 'docs/raw-edit-validation-2026-10-24.json', 'docs/dng-validation-2026-10-23.json',
                 'vendor/LibRaw-0.22.2.zip']
-SOURCE_SCRIPTS = ['build-release.ps1', 'build-native.ps1', 'release.py', 'adobe-raw-render.ps1',
+SOURCE_SCRIPTS = ['build-release.ps1', 'build-native.ps1', 'build-icons.py', 'release.py', 'bridge_startup_report.py', 'adobe-raw-render.ps1',
                   'register-integrations.ps1', 'register-adobe.cmd', 'unregister-adobe.cmd',
                   'analyze_startup.py', 'verify_feature_images.py', 'native_smoke.py', 'crop_smoke.py',
                   'install-bridge.ps1', 'verify_samples.py', 'build-macos.py', 'install-macos.command']
@@ -76,6 +91,9 @@ def notices(registry, version):
                       'Adapter source: native/raw_bridge.cpp and native/jpeg_scaled.cpp. Rebuild: scripts/build-native.ps1.\n')
         for name in ['LICENSE.CDDL', 'LICENSE.LGPL', 'COPYRIGHT']:
             chunks.append(sdk.read('LibRaw-0.22.2/'+name).decode('utf-8', errors='replace'))
+    chunks.append('\n===== Adobe DNG SDK classic SDR numeric reference =====\n'
+                  'Copyright 2006-2023 Adobe Systems Incorporated. All Rights Reserved.\n'
+                  + (ROOT/'vendor/ADOBE-DNG-SDK-LICENSE.txt').read_text(encoding='utf-8'))
     return '\n'.join(chunks), len(found)
 
 
@@ -92,7 +110,7 @@ def source_paths():
     paths = [ROOT/p for p in SOURCE_FILES]
     paths += [ROOT/'scripts'/p for p in SOURCE_SCRIPTS]
     paths += [PLUGIN/p for p in LUA]
-    for folder, suffixes in [('src', {'.rs'}), ('examples', {'.rs'}),
+    for folder, suffixes in [('src', {'.rs', '.wgsl'}), ('examples', {'.rs'}),
                              ('tests', {'.rs', '.py', '.cjs', '.jpg'}),
                              ('native', {'.cpp', '.h', '.inc'}), ('bridge', {'.jsx'})]:
         paths += [p for p in (ROOT/folder).rglob('*') if p.is_file() and p.suffix in suffixes]
@@ -129,7 +147,7 @@ def main():
     for path in ['bridge/FastCull.jsx', 'scripts/register-integrations.ps1', 'scripts/build-native.ps1',
                  'native/raw_bridge.cpp', 'native/jpeg_scaled.cpp', 'native/white_balance.h',
                  'native/white_balance_table.inc', 'vendor/LibRaw-0.22.2.zip', 'LICENSE', 'README.md',
-                 'docs/RAW-EDITING.md', 'docs/DNG.md', 'docs/MACOS.md',
+                 'docs/RAW-EDITING.md', 'docs/DNG.md', 'docs/MACOS.md', 'docs/FOCUS-POINTS.md',
                  'docs/COLOR-PIPELINE.md', 'docs/raw-color-calibration-validation-2026-10-30.json',
                  'docs/RAW-COLOR-INVESTIGATION-2026-10-30.md', 'docs/raw-color-experiments-2026-10-30.json',
                  'docs/raw-zoom-color-validation-2026-10-30.json', 'docs/raw-flow-validation-2026-10-30.json',

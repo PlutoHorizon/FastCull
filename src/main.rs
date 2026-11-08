@@ -6,9 +6,13 @@ mod exposure;
 mod exposure_preview;
 mod filter_ui;
 mod focus;
+mod focus_overlay;
 mod folder_ui;
+mod graphics;
 mod launch;
 mod logger;
+#[cfg(target_os = "macos")]
+mod macos_color;
 mod move_jobs;
 mod raw_editor;
 mod raw_gate;
@@ -363,7 +367,9 @@ fn main() {
             show_error(&format!("选片器发生异常：{info}"));
         }
     }));
-    if let Err(e) = run().context("FastCull") {
+    let result = run().context("FastCull");
+    fastcull::dng::clear_decode_cache();
+    if let Err(e) = result {
         println!("ERROR {e:#}");
         log::error!("{e:#}");
         if interactive {

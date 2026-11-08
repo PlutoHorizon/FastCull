@@ -20,8 +20,10 @@ def info_plist(version):
     return dict(CFBundleName="FastCull", CFBundleDisplayName="FastCull",
                 CFBundleIdentifier="com.zrtc.fastcull", CFBundleExecutable="fastcull",
                 CFBundlePackageType="APPL", CFBundleInfoDictionaryVersion="6.0",
+                CFBundleIconFile="FastCull.icns",
                 CFBundleShortVersionString=version, CFBundleVersion=version,
                 LSMinimumSystemVersion="11.0", NSHighResolutionCapable=True,
+                NSSupportsAutomaticGraphicsSwitching=True,
                 NSPrincipalClass="NSApplication")
 
 
@@ -84,6 +86,10 @@ def main():
     env["FASTCULL_RAW_DLL"] = str(dylib)
     version = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
     run(["cargo", "test", "--locked", "--target", target])
+    # Exercise the exact shared WGSL on this Mac's Metal adapter. A machine
+    # without a native GPU must fail this acceptance, not silently use GL/CPU.
+    run(["cargo", "test", "--locked", "--target", target, "--bin", "fastcull",
+         "native_gpu_pixels_match_cpu_scene_and_jpeg_reference", "--", "--ignored", "--nocapture"])
     run(["cargo", "build", "--release", "--locked", "--target", target, "--bin", "fastcull"])
     # The packaged app must locate Contents/Frameworks itself, without the
     # development override used to exercise the native adapter in cargo tests.
@@ -97,6 +103,7 @@ def main():
         plistlib.dump(info_plist(version), file)
     shutil.copy2(scratch / f"target/{target}/release/fastcull", contents / "MacOS/fastcull")
     shutil.copy2(dylib, contents / "Frameworks/libfastcull_raw.dylib")
+    shutil.copy2(ROOT / "assets/fastcull.icns", contents / "Resources/FastCull.icns")
     plugin = package / "FastCull.lrplugin"
     plugin.mkdir()
     for path in (ROOT / "lrplugins/FastCull.lrplugin").glob("*.lua"):
@@ -111,8 +118,13 @@ def main():
     shutil.copytree(app, plugin / "FastCull.app")
     for relative in ("bridge/FastCull.jsx", "scripts/install-macos.command", "scripts/build-macos.py",
                      "native/raw_bridge.cpp", "native/white_balance.h", "native/white_balance_table.inc",
-                     "vendor/LibRaw-0.22.2.zip", "docs/MACOS.md",
-                     "docs/RAW-EDITING.md", "docs/DNG.md", "docs/raw-window-validation-2026-10-24.json",
+                     "vendor/LibRaw-0.22.2.zip", "vendor/ADOBE-DNG-SDK-LICENSE.txt", "docs/MACOS.md",
+                     "docs/diagnostics/COLOR-EMBEDDED-METAL-2026-11-02.md",
+                     "docs/diagnostics/ACR-COLOR-2026-11-03.md", "docs/acr-color-validation-2026-11-03.json",
+                     "docs/diagnostics/RAW-PROFILE-SELECTOR-2026-11-03.md", "docs/raw-profile-validation-2026-11-03.json",
+                     "docs/diagnostics/DNG-JPEGXL-PANO-2026-11-03.md",
+                     "docs/diagnostics/RAW-DIRECTX-2026-11-02.md",
+                     "docs/RAW-EDITING.md", "docs/DNG.md", "docs/FOCUS-POINTS.md", "docs/raw-window-validation-2026-10-24.json",
                      "docs/COLOR-PIPELINE.md", "docs/raw-color-calibration-validation-2026-10-30.json",
                      "docs/RAW-COLOR-INVESTIGATION-2026-10-30.md", "docs/raw-color-experiments-2026-10-30.json",
                      "docs/raw-zoom-color-validation-2026-10-30.json", "docs/raw-flow-validation-2026-10-30.json",
@@ -141,6 +153,8 @@ def main():
         raise RuntimeError("Dependency license registry incomplete")
     for name in ("LICENSE.CDDL", "LICENSE.LGPL", "COPYRIGHT"):
         notices.append((raw / name).read_text())
+    notices.append("\nAdobe DNG SDK classic SDR numeric reference. Copyright 2006-2023 Adobe Systems Incorporated. All Rights Reserved.\n")
+    notices.append((ROOT / "vendor/ADOBE-DNG-SDK-LICENSE.txt").read_text(encoding="utf-8"))
     (package / "THIRD-PARTY-NOTICES.txt").write_text("\n".join(notices))
     run([sys.executable, ROOT / "tests/macos_native_smoke.py", contents / "Frameworks/libfastcull_raw.dylib"])
     dist = ROOT / "dist" / "macos"

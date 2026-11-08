@@ -140,6 +140,37 @@ test("native helper failure is reported and retains the request", () => {
     assert.match(h.alerts[0], /7/);
     assert.ok(Object.keys(h.files).some(name => /bridge-requests.*\.txt$/.test(name)));
 });
+
+test("healthy native launcher receives a closed request without blocking Bridge in app.system", () => {
+    const h = host();
+    h.select('D:\\照片 100% & (一).ARW');
+    h.files['C:\\UserData\\FastCull\\hotkeys-bridge\\launcher-ready'] = String(Date.now());
+    h.context.File.prototype.rename = function (name) {
+        assert.equal(this.mode, 'w');
+        const destination = this.parent.fsName + '\\' + name;
+        h.files[destination] = h.files[this.fsName];
+        delete h.files[this.fsName];
+        this.fsName = destination;
+        return true;
+    };
+    h.context.app.system = () => { throw new Error('slow Bridge app.system must be bypassed'); };
+    h.context.FastCullBridge.open();
+    assert.deepEqual(h.alerts, []);
+    const queued = Object.keys(h.files).find(name => /bridge-requests.*\.queued$/.test(name));
+    assert.ok(queued, 'publish a native queue job after writing the photo list');
+    assert.equal(h.files[queued], 'FASTCULL_BRIDGE_V1\nD:\\照片 100% & (一).ARW\n');
+    assert.equal(Object.keys(h.files).filter(name => /bridge-requests.*\.txt$/.test(name)).length, 0);
+});
+
+test("old or stopped native launchers retain the legacy launch path", () => {
+    for (const stamp of [undefined, String(Date.now()-30000), String(Date.now()+30000), 'invalid']) {
+        const h = host(); h.select('D:\\photo.ARW');
+        if (stamp !== undefined) h.files['C:\\UserData\\FastCull\\hotkeys-bridge\\launcher-ready'] = stamp;
+        h.context.FastCullBridge.open();
+        assert.deepEqual(h.alerts, []);
+        assert.equal(h.commands.length, 1);
+    }
+});
 test("path protection rejects each unsafe character and preserves valid Unicode", () => {
     const h = host();
     for (const character of ['%', '!', '"', '\r', '\n', '\0']) {

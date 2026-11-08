@@ -154,8 +154,9 @@ pub struct Values {
     pub exposure: Option<i32>,
     pub white_balance: Option<WhiteBalanceSettings>,
     pub basic: BasicAdjustments,
-    /// Profile reference and processing version are read-only in this editor.
+    /// Base camera profile; an enhanced Look can supply the effective profile.
     pub camera_profile: Option<String>,
+    pub look_name: Option<String>,
     pub process_version: Option<String>,
     pub rating: Option<u8>,
     pub label: Option<String>,
@@ -164,6 +165,7 @@ pub struct Values {
 }
 #[derive(Clone, Debug, Default)]
 pub struct Updates {
+    pub camera_profile: Option<String>,
     pub crop: Option<crate::crop::Crop>,
     pub exposure: Option<i32>,
     pub white_balance: Option<WhiteBalance>,
@@ -177,6 +179,7 @@ impl Updates {
     fn entries(&self) -> Vec<(&'static str, String)> {
         let mut out = Vec::new();
         if self.crop.is_some()
+            || self.camera_profile.is_some()
             || self.exposure.is_some()
             || self.white_balance.is_some()
             || !self.basic.empty()
@@ -231,7 +234,7 @@ impl Updates {
         out
     }
     pub fn empty(&self) -> bool {
-        self.entries().is_empty()
+        self.camera_profile.is_none() && self.entries().is_empty()
     }
     pub fn zero(&self) -> bool {
         self.rating.unwrap_or(0) == 0
@@ -242,6 +245,7 @@ impl Updates {
             && self.white_balance.is_none()
             && self.basic.empty()
             && self.crop.is_none()
+            && self.camera_profile.is_none()
     }
 }
 struct Document {
@@ -666,6 +670,11 @@ pub fn parse_values(text: &str) -> Result<Values> {
         crop,
         white_balance,
         camera_profile: strict("crs:CameraProfile")?,
+        look_name: if doc.namespace_repairs.is_empty() {
+            look_name(text)?
+        } else {
+            look_name(&patch(text, &Updates::default())?)?
+        },
         process_version: strict("crs:ProcessVersion")?,
         exposure,
         basic,
@@ -679,7 +688,159 @@ pub fn parse_values(text: &str) -> Result<Values> {
             .filter(|v| (1..=8).contains(v)),
     })
 }
+fn look_name(text: &str) -> Result<Option<String>> {
+    use quick_xml::{NsReader, name::ResolveResult};
+    let mut reader = NsReader::from_str(text);
+    let mut stack: Vec<(bool, String)> = Vec::new();
+    let mut look_depth = None;
+    let mut result = None;
+    let mut seen = false;
+    loop {
+        let (ns, event) = reader.read_resolved_event()?;
+        let crs = matches!(ns,ResolveResult::Bound(n) if n.as_ref()==CRS.as_bytes());
+        let rdf = matches!(ns,ResolveResult::Bound(n) if n.as_ref()==RDF.as_bytes());
+        match event {
+            Event::Start(e) | Event::Empty(e) => {
+                let empty =
+                    text.as_bytes().get(reader.buffer_position() as usize - 2) == Some(&b'/');
+                let local = String::from_utf8(e.local_name().as_ref().to_vec())?;
+                let top_description =
+                    stack.len() <= 3 && stack.last().is_some_and(|(r, n)| *r && n == "Description");
+                if crs && local == "Look" && top_description {
+                    ensure!(!seen, "duplicate enhanced profile Look");
+                    seen = true;
+                    look_depth = Some(stack.len());
+                }
+                let direct = look_depth.is_some_and(|d| {
+                    stack.len() == d
+                        || stack.len() == d + 1
+                        || (stack.len() == d + 2
+                            && stack.last().is_some_and(|(r, n)| *r && n == "Description"))
+                });
+                if direct && (local == "Look" || rdf && local == "Description") {
+                    for attr in e.attributes() {
+                        let attr = attr?;
+                        if attr.key.local_name().as_ref() == b"Name"
+                            && matches!(reader.resolve_attribute(attr.key).0,ResolveResult::Bound(n) if n.as_ref()==CRS.as_bytes())
+                        {
+                            result = Some(
+                                attr.decode_and_unescape_value(reader.decoder())?
+                                    .into_owned(),
+                            );
+                        }
+                    }
+                }
+                if direct && crs && local == "Name" && !empty {
+                    result = Some(
+                        quick_xml::escape::unescape(&reader.read_text(e.name())?)?.into_owned(),
+                    );
+                    continue;
+                }
+                if !empty {
+                    stack.push((rdf, local));
+                } else if look_depth == Some(stack.len()) {
+                    look_depth = None;
+                }
+            }
+            Event::End(_) => {
+                stack.pop();
+                if look_depth == Some(stack.len()) {
+                    look_depth = None;
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(result)
+}
+fn select_profile(text: &str, name: &str) -> Result<String> {
+    ensure!(
+        !name.trim().is_empty() && name.len() <= 512 && name.chars().all(xml_character),
+        "invalid camera profile name"
+    );
+    let enhanced = if name == crate::enhanced_profile::NAME {
+        Some(crate::enhanced_profile::read()?)
+    } else {
+        None
+    };
+    let original = develop_packet(text)?;
+    let subjects: HashSet<_> = original
+        .descriptions
+        .iter()
+        .map(|d| d.subject.as_str())
+        .collect();
+    ensure!(
+        subjects.len() <= 1,
+        "ambiguous RDF subjects for profile edit"
+    );
+    let subject = subjects.iter().next().copied().unwrap_or("");
+    let mut added = format!(
+        "<fcRdf:Description xmlns:fcRdf=\"{RDF}\" xmlns:fcCrs=\"{CRS}\" fcRdf:about=\"{}\" fcCrs:HasSettings=\"True\" fcCrs:CameraProfile=\"{}\"",
+        quick_xml::escape::escape(subject),
+        quick_xml::escape::escape(if enhanced.is_some() {
+            "Adobe Standard"
+        } else {
+            name
+        })
+    );
+    let mut table_name = None;
+    if let Some(e) = enhanced {
+        let key = format!("Table_{}", e.table_id);
+        added.push_str(&format!(
+            " fcCrs:{key}=\"{}\">",
+            quick_xml::escape::escape(&e.encoded_table)
+        ));
+        table_name = Some(key);
+        added.push_str(&format!("<fcCrs:Look fcRdf:parseType=\"Resource\"><fcCrs:Name>Adobe Color</fcCrs:Name><fcCrs:Amount>1</fcCrs:Amount><fcCrs:UUID>{}</fcCrs:UUID><fcCrs:SupportsAmount>false</fcCrs:SupportsAmount><fcCrs:SupportsMonochrome>false</fcCrs:SupportsMonochrome><fcCrs:SupportsOutputReferred>false</fcCrs:SupportsOutputReferred><fcCrs:Parameters fcRdf:parseType=\"Resource\"><fcCrs:Version>10.3</fcCrs:Version><fcCrs:ProcessVersion>10.0</fcCrs:ProcessVersion><fcCrs:ConvertToGrayscale>False</fcCrs:ConvertToGrayscale><fcCrs:CameraProfile>Adobe Standard</fcCrs:CameraProfile><fcCrs:LookTable>{}</fcCrs:LookTable><fcCrs:ToneCurvePV2012><fcRdf:Seq>",crate::enhanced_profile::UUID,e.table_id));
+        for [x, y] in e.points {
+            added.push_str(&format!("<fcRdf:li>{}, {}</fcRdf:li>", x * 255., y * 255.));
+        }
+        added.push_str("</fcRdf:Seq></fcCrs:ToneCurvePV2012></fcCrs:Parameters></fcCrs:Look></fcRdf:Description>");
+    } else {
+        added.push_str("/>");
+    }
+    let mut edits = Vec::new();
+    for d in &original.descriptions {
+        for (property, range) in d
+            .properties
+            .iter()
+            .zip(d.attributes.iter().chain(&d.elements))
+        {
+            if matches!(
+                property.as_str(),
+                "CameraProfile" | "CameraProfileDigest" | "Look" | "HasSettings"
+            ) || table_name.as_ref() == Some(property)
+            {
+                edits.push((range.clone(), String::new()));
+            }
+        }
+    }
+    if let Some(i) = original.insertion {
+        edits.push((i.range, i.before + &added + &i.after));
+    } else {
+        let root = original.bare.context("missing RDF root")?;
+        edits.push((root.end..root.end, added + "</fcRdf:RDF>"));
+        edits.push((
+            root.start..root.start,
+            format!("<fcRdf:RDF xmlns:fcRdf=\"{RDF}\">"),
+        ));
+    }
+    edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    let mut output = text.to_owned();
+    for (range, value) in edits {
+        output.replace_range(range, &value);
+    }
+    develop_packet(&output)?;
+    Ok(output)
+}
 pub fn patch(text: &str, updates: &Updates) -> Result<String> {
+    if let Some(name) = &updates.camera_profile {
+        let mut remaining = updates.clone();
+        remaining.camera_profile = None;
+        let repaired = patch(text, &Updates::default())?;
+        return patch(&select_profile(&repaired, name)?, &remaining);
+    }
     ensure!(updates.crop.is_none_or(|c| c.valid()), "invalid crop");
     ensure!(updates.basic.valid(), "basic adjustment outside -100..100");
     ensure!(
@@ -1301,4 +1462,37 @@ pub fn merge_develop(source: &str, adobe: &str) -> Result<String> {
     }
     develop_packet(&merged).context("merged develop packet")?;
     Ok(merged)
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+    #[test]
+    fn camera_switch_removes_old_look_and_digest_preserves_other_settings() {
+        let input = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description r:about="" xmlns:c="http://ns.adobe.com/camera-raw-settings/1.0/" xmlns:p="http://ns.adobe.com/xap/1.0/" p:Rating="4" c:Exposure2012="1.25" c:CameraProfile="Adobe Standard" c:CameraProfileDigest="OLD"><c:Look r:parseType="Resource"><c:Name>Old Look</c:Name><c:Parameters c:CameraProfile="Hidden Base"/></c:Look><c:UnrelatedMask><r:Seq><r:li>keep</r:li></r:Seq></c:UnrelatedMask></r:Description></r:RDF></x:xmpmeta>"#;
+        assert_eq!(
+            parse_values(input).unwrap().look_name.as_deref(),
+            Some("Old Look")
+        );
+        let u = Updates {
+            camera_profile: Some("Camera ST & Custom".into()),
+            ..Default::default()
+        };
+        assert!(!u.empty());
+        let output = patch(input, &u).unwrap();
+        let values = parse_values(&output).unwrap();
+        assert_eq!(values.camera_profile.as_deref(), Some("Camera ST & Custom"));
+        assert!(values.look_name.is_none());
+        assert_eq!(values.rating, Some(4));
+        assert_eq!(values.exposure, Some(1_250_000));
+        assert!(!output.contains("OLD"));
+        assert!(output.contains("<c:UnrelatedMask>"));
+        assert!(!output.contains("Old Look"));
+        assert_eq!(
+            parse_values(&patch(&template(), &u).unwrap())
+                .unwrap()
+                .camera_profile,
+            values.camera_profile
+        );
+    }
 }

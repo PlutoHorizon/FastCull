@@ -12,7 +12,7 @@ use std::{
     path::Path,
 };
 
-const MAGIC: &[u8; 16] = b"FC_FLOAT_RAW_V1\0";
+const MAGIC: &[u8; 16] = b"FC_FLOAT_RAW_V2\0";
 const HEADER: u64 = 40;
 const MAX_METADATA: usize = 32 * 1024 * 1024;
 const MAX_PIXELS: usize = 160_000_000;
@@ -238,6 +238,7 @@ fn encode_metadata(frame: &Frame) -> Result<Vec<u8>> {
     e.number_option(frame.tint)?;
     e.f32(frame.recipe.baseline_exposure)?;
     e.map(frame.recipe.look.as_ref())?;
+    e.map(frame.recipe.extra_look.as_ref())?;
     ensure!(
         (2..=MAX_CURVE).contains(&frame.recipe.curve.len()),
         "线性缓存色调曲线长度无效"
@@ -304,6 +305,7 @@ fn decode_metadata(bytes: &[u8], size: [usize; 2]) -> Result<Frame> {
     let tint = d.number_option()?;
     let baseline_exposure = d.f32()?;
     let look = d.map()?;
+    let extra_look = d.map()?;
     let curve_len = d.u32()?;
     ensure!(
         (2..=MAX_CURVE).contains(&curve_len),
@@ -354,6 +356,7 @@ fn decode_metadata(bytes: &[u8], size: [usize; 2]) -> Result<Frame> {
         pixels: Vec::new(),
         recipe: Recipe {
             look,
+            extra_look,
             curve,
             baseline_exposure,
         },
@@ -492,6 +495,14 @@ mod tests {
                 [0.3, 0.4, 0.5, 1.],
             ],
             recipe: Recipe {
+                extra_look: Some(
+                    HsvMap::new(
+                        [1, 2, 1],
+                        vec![[0., 1., 1.], [-8., 1.1, 0.9]],
+                        Encoding::Linear,
+                    )
+                    .unwrap(),
+                ),
                 look: Some(
                     HsvMap::new(
                         [1, 2, 1],

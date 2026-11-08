@@ -1,4 +1,15 @@
-# FastCull 2.9.0 · RAW 色彩、编辑工作流与对比浏览
+# FastCull 2.10.0 · 原生图形后端、对焦点与新图标
+
+- Windows 主窗口、曝光预览及 RAW 编辑统一使用 DirectX 12，优先选择 NVIDIA GPU；macOS 使用 Metal，并为显示图层设置 sRGB 色彩空间。
+- 支持 JPEG XL 压缩 DNG 的预览与全尺寸解码，覆盖全景照片的必要多项式映射和透明掩膜处理。
+- 新增对焦点显示按钮与 O 快捷键，在单图、对比和 RAW 编辑中显示支持的 Sony、Nikon、Canon 相机记录，随旋转、裁切和缩放对齐。具体记录格式见 [对焦点说明](https://github.com/zhuorantiancheng/FastCull/blob/v2.10.0/docs/FOCUS-POINTS.md)。
+- RAW 编辑增加配置文件选择，读取 DNG 内嵌配置及本机匹配配置；改进 Adobe Color 资源处理和选择项的 XMP 保存。
+- Bridge 的 Windows 快捷键通过原生请求队列交接照片，缩短外部命令等待；RAW 查看支持单击居中放大、再次单击适配，拖动后保持当前倍率。
+- 启用新的圆角光圈相册图标：紧密叠放、逐层灰度递变，放大主体并减少黑边；Windows EXE、程序窗口与 macOS 应用包使用同一图稿。
+
+Windows 安装版、便携版、源码包及 macOS Apple Silicon/Intel 包从同一标签构建。本地 RAW 渲染与 Lightroom/ACR 仍有差异；相机对焦坐标的支持范围见文档。Windows 包未签名；macOS 包仅 ad-hoc 签名、未公证。本版不包含独立 Bridge/DxO PureRAW 扩展及其维护脚本。
+
+## 2.9.0 · RAW 色彩、编辑工作流与对比浏览
 
 - RAW 显影改用高精度线性浮点管线，支持机型 DCP 的双光源矩阵、Hue/Sat 校正、Look 表与色调曲线；保留高光余量，在显示末端转换为 sRGB。配置文件从本机只读加载，发行包不包含 Adobe 配置文件。
 - 新增 RGB/亮度直方图和实际配置文件提示；改进原片白平衡、自定义色温/色调与灰点吸管。曝光和七项基础调整通过 GPU 实时预览。

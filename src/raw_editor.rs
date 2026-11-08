@@ -155,6 +155,7 @@ enum Job {
     Prepare(PrepareJob),
 }
 enum Event {
+    Profiles(Vec<fastcull::raw_profiles::Choice>),
     Dimensions {
         size: Vec2,
         orientation: u16,
@@ -434,6 +435,11 @@ impl Worker {
                             let quick_started = Instant::now();
                             let quick = (|| -> Result<_> {
                                 let info = fastcull::arw::ArwInfo::read(&path)?;
+                                let _ =
+                                    send.send(Event::Profiles(fastcull::raw_profiles::choices(
+                                        &path,
+                                        info.capture.camera.as_deref().unwrap_or(""),
+                                    )));
                                 if let Some((w, h)) = info.image_size.or(info.raw_size) {
                                     let _ = send.send(Event::Dimensions {
                                         size: Vec2::new(w as f32, h as f32),
@@ -494,15 +500,19 @@ impl Worker {
                                 let existing = fastcull::raw_float_cache::read(&output)
                                     .ok()
                                     .filter(|frame| {
-                                        fastcull::raw_color::find_profile(
-                                            &frame.make,
-                                            &frame.model,
-                                            &frame.requested_profile,
-                                        )
-                                        .is_ok_and(|p| {
-                                            p.map_or(0, |p| p.fingerprint)
-                                                == frame.profile_fingerprint
-                                        })
+                                        xmp::parse_values(&job.packet)
+                                            .and_then(|values| {
+                                                fastcull::raw_color::find_profile_for_source(
+                                                    &job.source,
+                                                    &frame.make,
+                                                    &frame.model,
+                                                    &values,
+                                                )
+                                            })
+                                            .is_ok_and(|p| {
+                                                p.map_or(0, |p| p.fingerprint)
+                                                    == frame.profile_fingerprint
+                                            })
                                     });
                                 let image = if let Some(image) = existing {
                                     cached = true;
@@ -631,6 +641,7 @@ pub enum Action {
     Saved(Box<(Values, Updates)>),
 }
 pub struct Editor {
+    focus_overlay: crate::focus_overlay::Overlay,
     pub path: PathBuf,
     original: Values,
     draft_crop: fastcull::crop::Crop,
@@ -665,6 +676,9 @@ pub struct Editor {
     linear_texture: Option<Arc<crate::raw_preview::LinearTexture>>,
     grey_sampler: Option<fastcull::raw_color::GreySampler>,
     profile_status: String,
+    profile_choice: String,
+    profile_choices: Vec<fastcull::raw_profiles::Choice>,
+    profile_materialize: bool,
     color_warning: Option<String>,
     changed_at: Option<Instant>,
     error: Option<String>,
@@ -714,7 +728,13 @@ impl Editor {
             .unwrap_or_default();
         let initial_exposure = f64::from(original.exposure.unwrap_or(0)) / 1_000_000.;
         let packet = xmp::packet(&path)?;
+        let profile_choice = initial_profile(&path, &original);
+        let profile_materialize = profile_choice == "Adobe Color"
+            && fastcull::enhanced_profile::available()
+            && !fastcull::enhanced_profile::packet_has_payload(packet.as_deref().unwrap_or(""))
+                .unwrap_or(false);
         let mut editor = Self {
+            focus_overlay: Default::default(),
             packet: packet.clone(),
             source_stamp: stamp(&path)?,
             path,
@@ -753,6 +773,9 @@ impl Editor {
             linear_texture: None,
             grey_sampler: None,
             profile_status: "正在读取配置文件…".into(),
+            profile_choice,
+            profile_choices: Vec::new(),
+            profile_materialize,
             color_warning: None,
             changed_at: None,
             error: None,
@@ -827,6 +850,10 @@ impl Editor {
             }
         }
         Ok(Updates {
+            camera_profile: (self.profile_choice
+                != fastcull::raw_color::requested_profile(&self.original)
+                || (self.profile_choice == "Adobe Color" && self.profile_materialize))
+                .then(|| self.profile_choice.clone()),
             rating: (self.rating != self.original.rating.unwrap_or(0)).then_some(self.rating),
             crop: (self.draft_crop != self.original.crop.unwrap_or_default())
                 .then_some(self.draft_crop),
@@ -1022,10 +1049,12 @@ impl Editor {
         }
     }
     pub fn show(&mut self, ctx: &egui::Context) -> Action {
+        self.focus_overlay.shortcut(ctx);
         let mut action = Action::None;
         let mut crop_action = crate::crop_ui::Action::None;
         while let Ok(event) = self.worker.receive.try_recv() {
             match event {
+                Event::Profiles(profiles) => self.profile_choices = profiles,
                 Event::Dimensions { size, orientation } => {
                     self.source_size = Some(size);
                     if self.original.orientation.is_none() {
@@ -1108,6 +1137,13 @@ impl Editor {
                                     .map(|r| (*r.start(), *r.end()))
                             });
                             self.original = values;
+                            self.profile_choice = initial_profile(&self.path, &self.original);
+                            self.profile_materialize = self.profile_choice == "Adobe Color"
+                                && fastcull::enhanced_profile::available()
+                                && !fastcull::enhanced_profile::packet_has_payload(
+                                    &self.render_packet,
+                                )
+                                .unwrap_or(false);
                             self.draft_crop = self.original.crop.unwrap_or_default();
                             self.draft_orientation =
                                 self.original.orientation.unwrap_or(self.draft_orientation);
@@ -1170,6 +1206,15 @@ impl Editor {
                                 size: frame.size,
                                 pixels: frame.pixels,
                                 recipe: crate::raw_preview::Recipe {
+                                    extra_look: frame.recipe.extra_look.map(|v| {
+                                        crate::raw_preview::HsvLookup {
+                                            dims: v.dims,
+                                            data: v.data,
+                                            encoding: u32::from(
+                                                v.encoding == fastcull::dcp::Encoding::Srgb,
+                                            ),
+                                        }
+                                    }),
                                     look: frame.recipe.look.map(|map| {
                                         crate::raw_preview::HsvLookup {
                                             dims: map.dims,
@@ -1277,6 +1322,7 @@ impl Editor {
                     }
                     match result {
                         Ok((values, updates)) => {
+                            self.profile_materialize = false;
                             self.save_error = None;
                             self.source_orientation = values.orientation;
                             self.original = values.clone();
@@ -1330,9 +1376,12 @@ impl Editor {
                     editor.redo();
                 }
             } else {
-                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Z)) {
+                if ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Z)
+                        || i.consume_key(egui::Modifiers::NONE, egui::Key::F)
+                }) {
                     if self.view.is_fit() {
-                        self.view.set_scale(1.);
+                        self.view.hundred_percent();
                     } else {
                         self.view.fit();
                     }
@@ -1416,7 +1465,7 @@ impl Editor {
                                     if fit {
                                         self.view.fit();
                                     } else {
-                                        self.view.set_scale(1.);
+                                        self.view.hundred_percent();
                                     }
                                 }
                             }
@@ -1430,13 +1479,14 @@ impl Editor {
                                         .fixed_decimals(0)
                                         .suffix("%"),
                                 )
-                                .on_hover_text("滚轮缩放 · 拖动平移 · 双击或 Z 切换适屏 / 100%")
+                                .on_hover_text("单击居中放大 / 返回适配 · 拖动平移 · 滚轮缩放 · F 或 Z 切换适配 / 100%")
                                 .changed()
                             {
                                 self.view.set_scale(percent / 100.);
                             }
                         });
                         let valid = self.updates();
+                        self.focus_overlay.control(ui);
                         if let Err(error) = &valid {
                             ui.colored_label(Color32::LIGHT_RED, error.to_string());
                         }
@@ -1509,6 +1559,10 @@ impl Editor {
                     .show(ui, |ui| {
                         let (mut native_changed, mut changed) = (false, false);
                         ui.add_enabled_ui(!self.saving && self.ready, |ui| {
+                            native_changed |=
+                                profile_picker(ui, &mut self.profile_choice, &self.profile_choices);
+                            ui.add_space(5.);
+                            ui.separator();
                             section_header(
                                 ui,
                                 "色调",
@@ -1783,6 +1837,17 @@ impl Editor {
                         Color32::WHITE,
                     );
                 }
+                if let Some(size) = self.source_size {
+                    self.focus_overlay.paint(
+                        ui.painter(),
+                        &self.path,
+                        area,
+                        rect,
+                        size,
+                        self.draft_orientation,
+                        self.draft_crop,
+                    );
+                }
             } else {
                 ui.painter().text(
                     area.center(),
@@ -1903,6 +1968,13 @@ impl Editor {
                 };
                 self.temperature = "4850".into();
                 self.tint = "17".into();
+                if let Ok(profile) = std::env::var("FASTCULL_RAW_EDIT_SMOKE_PROFILE") {
+                    assert!(
+                        self.profile_choices.iter().any(|p| p.name == profile),
+                        "smoke profile not available"
+                    );
+                    self.profile_choice = profile;
+                }
                 self.render().unwrap();
                 self.smoke_step = 2;
             }
@@ -1943,7 +2015,7 @@ impl Editor {
                         "saved=true exposure={} white_balance={:?} profile={:?} full={} status={} basic={:?}",
                         self.original.exposure.unwrap_or(0),
                         self.original.white_balance,
-                        self.original.camera_profile,
+                        self.original.look_name.as_ref().or(self.original.camera_profile.as_ref()),
                         self.full,
                         self.status,
                         self.original.basic
@@ -1958,6 +2030,50 @@ impl Editor {
     }
 }
 
+fn initial_profile(path: &Path, values: &Values) -> String {
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("dng"))
+        && (values
+            .camera_profile
+            .as_deref()
+            .is_none_or(|s| s.trim().is_empty())
+            || (!path.with_extension("xmp").is_file()
+                && values
+                    .camera_profile
+                    .as_deref()
+                    .is_some_and(|s| matches!(s, "Adobe Standard" | "Embedded"))))
+        && values.look_name.is_none()
+        && fastcull::enhanced_profile::available()
+    {
+        "Adobe Color".into()
+    } else {
+        fastcull::raw_color::requested_profile(values).into()
+    }
+}
+fn profile_picker(
+    ui: &mut egui::Ui,
+    selected: &mut String,
+    choices: &[fastcull::raw_profiles::Choice],
+) -> bool {
+    let before = selected.clone();
+    ui.label("配置文件");
+    egui::ComboBox::from_id_salt("raw-camera-profile")
+        .width(ui.available_width().min(240.))
+        .height(260.)
+        .selected_text(
+            choices
+                .iter()
+                .find(|p| p.name == *selected)
+                .map_or(selected.as_str(), |p| p.label.as_str()),
+        )
+        .show_ui(ui, |ui| {
+            for p in choices {
+                ui.selectable_value(selected, p.name.clone(), &p.label);
+            }
+        });
+    *selected != before
+}
 fn basic_slider(
     ui: &mut egui::Ui,
     basic: &mut BasicAdjustments,
@@ -2096,6 +2212,98 @@ fn adjustment_slider(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dng_default_preserves_saved_profile_but_not_an_unrelated_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join("photo.dng");
+        fs::write(raw.with_extension("xmp"), xmp::template()).unwrap();
+        let expected = if fastcull::enhanced_profile::available() {
+            "Adobe Color"
+        } else {
+            "Adobe Standard"
+        };
+        assert_eq!(initial_profile(&raw, &Values::default()), expected);
+        let saved = Values {
+            camera_profile: Some("Adobe Standard".into()),
+            ..Default::default()
+        };
+        assert_eq!(initial_profile(&raw, &saved), "Adobe Standard");
+        let look = Values {
+            camera_profile: Some("Adobe Standard".into()),
+            look_name: Some("Custom Look".into()),
+            ..Default::default()
+        };
+        assert_eq!(initial_profile(&raw, &look), "Custom Look");
+    }
+    #[test]
+    fn profile_picker_accepts_real_pointer_selection() {
+        let ctx = egui::Context::default();
+        let mut selected = "Adobe Standard".to_owned();
+        let choices = vec![
+            fastcull::raw_profiles::Choice {
+                name: "Adobe Standard".into(),
+                label: "Adobe Standard".into(),
+            },
+            fastcull::raw_profiles::Choice {
+                name: "Embedded".into(),
+                label: "Embedded camera".into(),
+            },
+        ];
+        fn text_position(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<egui::Pos2> {
+            fn find(s: &egui::epaint::Shape, text: &str) -> Option<egui::Pos2> {
+                match s {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == text => {
+                        Some(t.pos + t.galley.rect.center().to_vec2())
+                    }
+                    egui::epaint::Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                    _ => None,
+                }
+            }
+            shapes.iter().find_map(|s| find(&s.shape, text))
+        }
+        let mut frame = |events: Vec<egui::Event>| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400., 300.),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        profile_picker(ui, &mut selected, &choices);
+                    });
+                },
+            )
+        };
+        let _ = frame(vec![]);
+        let output = frame(vec![]);
+        let at = text_position(&output.shapes, "Adobe Standard").unwrap();
+        let click = |p: egui::Pos2| {
+            vec![
+                egui::Event::PointerMoved(p),
+                egui::Event::PointerButton {
+                    pos: p,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+                egui::Event::PointerButton {
+                    pos: p,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ]
+        };
+        let _ = frame(click(at));
+        let output = frame(vec![]);
+        let at = text_position(&output.shapes, "Embedded camera").expect("profile menu opened");
+        let _ = frame(click(at));
+        assert_eq!(selected, "Embedded");
+    }
     fn scene_fixture(size: [usize; 2]) -> Box<fastcull::raw_color::Frame> {
         use fastcull::{
             raw_color::{Frame, GreySampler, Recipe},
@@ -2105,6 +2313,7 @@ mod tests {
             size,
             pixels: vec![[0.18, 0.18, 0.18, 1.]; size[0] * size[1]],
             recipe: Recipe {
+                extra_look: None,
                 look: None,
                 curve: vec![0., 1.],
                 baseline_exposure: 0.,
@@ -2129,6 +2338,88 @@ mod tests {
             model: "fixture".into(),
             requested_profile: "fixture".into(),
         })
+    }
+    #[test]
+    fn raw_canvas_single_click_centers_subject_and_drag_release_keeps_detail() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("click.ARW");
+        fs::write(&path, b"private UI fixture").unwrap();
+        let ctx = egui::Context::default();
+        let mut editor = Editor::new(path, &ctx, None, None).unwrap();
+        let (_send, receive) = mpsc::channel();
+        editor.worker.receive = receive;
+        editor.source_size = Some(Vec2::new(6000., 4000.));
+        editor.texture = Some(ctx.load_texture(
+            "click-fixture",
+            egui::ColorImage::filled([60, 40], Color32::GRAY),
+            Default::default(),
+        ));
+        let mut time = 0.;
+        let mut draw = |editor: &mut Editor, events| {
+            time += 0.1;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        Vec2::new(1100., 800.),
+                    )),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    editor.show(ctx);
+                },
+            );
+            let id = editor.texture.as_ref().unwrap().id();
+            output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Mesh(mesh) if mesh.texture_id == id => Some(mesh.calc_bounds()),
+                    _ => None,
+                })
+                .expect("RAW image must be painted")
+        };
+        draw(&mut editor, vec![]);
+        let fitted = draw(&mut editor, vec![]);
+        let pos = fitted.center() + fitted.size() * Vec2::new(0.1, -0.08);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        draw(
+            &mut editor,
+            vec![egui::Event::PointerMoved(pos), button(pos, true)],
+        );
+        let zoomed = draw(&mut editor, vec![button(pos, false)]);
+        assert_eq!(editor.view.scale(), 1.);
+        assert!(!editor.view.is_fit());
+        assert!(
+            editor.full,
+            "single click must automatically request full detail"
+        );
+        let subject = zoomed.min + zoomed.size() * Vec2::new(0.6, 0.42);
+        assert!((subject - fitted.center()).length() < 0.01);
+        draw(
+            &mut editor,
+            vec![egui::Event::PointerMoved(pos), button(pos, true)],
+        );
+        draw(
+            &mut editor,
+            vec![egui::Event::PointerMoved(pos + Vec2::new(80., 40.))],
+        );
+        let dragged = draw(&mut editor, vec![button(pos + Vec2::new(80., 40.), false)]);
+        assert!(!editor.view.is_fit());
+        assert!((dragged.center() - zoomed.center() - Vec2::new(80., 40.)).length() < 0.01);
+        draw(
+            &mut editor,
+            vec![egui::Event::PointerMoved(pos), button(pos, true)],
+        );
+        draw(&mut editor, vec![button(pos, false)]);
+        assert!(editor.view.is_fit());
     }
     #[test]
     fn ordinary_wheel_zooms_the_raw_canvas() {

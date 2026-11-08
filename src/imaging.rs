@@ -40,6 +40,13 @@ pub fn decode_level_with_geometry(
     level: Level,
     geometry: &mut dyn FnMut([usize; 2]),
 ) -> Result<Pixels> {
+    if info.jxl_preview && matches!(level, Level::Thumb | Level::Fit(_)) {
+        match crate::dng::jxl_preview(path, level, geometry) {
+            Ok(Some(pixels)) => return Ok(pixels),
+            Ok(None) => {}
+            Err(error) => log::warn!("DNG JPEG XL preview: {error:#}"),
+        }
+    }
     if level == Level::FastThumb {
         if let Some(bitmap) = &info.bitmap_thumbnail {
             return crate::dng::decode_thumbnail(path, bitmap);

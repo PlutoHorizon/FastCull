@@ -1,6 +1,10 @@
 # macOS 适配与验证
 
-2.8.0 分别构建 Apple Silicon（arm64）和 Intel（x86_64）包，部署目标为 macOS 11+。发布前检查两个架构的 Rust 编译、在对应 GitHub Mac runner 上运行测试、构建并验证原生库和应用包；最低系统版本、Mac 桌面及 Adobe 宿主操作仍须人工验收，不能用编译成功代替。
+当前源码支持 Apple Silicon（arm64）和 Intel（x86_64），部署目标为 macOS 11+、支持 Metal 的显卡。主窗口、曝光预览和独立 RAW 编辑使用 Metal，和 Windows DirectX 共用 WGSL；原 OpenGL 说明仅适用于早期发布包。
+
+本次修改已在 Windows 上通过两架构交叉编译、Apple Silicon Clippy 与 WGSL 到 Metal 2.0 转换检查，尚未在 Mac 真机运行或生成本次 Mac 二进制包。发布前仍须在对应架构的 Mac 上运行构建、GPU 像素测试、原生库与应用包检查；不能用交叉编译成功替代。
+
+色彩输出保持 sRGB，并给实际 Metal 图层设置 sRGB 标签，由 ColorSync 执行显示器匹配。未指定 XMP 配置时优先采用 DNG 内嵌矩阵、校准和外观信息。实现、固定样本色彩结果和当前验证范围见 [内嵌配置与 Metal 记录](diagnostics/COLOR-EMBEDDED-METAL-2026-11-02.md)。本地构建测试需 Python 3.11+ 和 Pillow；`python3 scripts/build-macos.py --arch arm64`（Intel 用 `x86_64`）会运行真实 Metal 像素与窗口验收，没有原生 GPU 时不会用 OpenGL 冒充通过。
 
 ## 已接入的功能
 
@@ -70,3 +74,5 @@ GitHub Actions 的 **macOS build** 工作流提供两个架构的独立构建和
 - 在未安装开发工具的 Mac 上运行发行包，确认不依赖构建机或 Homebrew 目录。
 
 本次实现未在 Mac 桌面和 Adobe 宿主上完成上述人工验收，发行包需经 Mac 构建工作流成功后才可交付使用。
+
+2026-11-03 用户确认没有可用 Mac，本轮没有新增真机验收；双架构交叉编译和离线 Metal 转换结果不能视为已通过上述检查。
