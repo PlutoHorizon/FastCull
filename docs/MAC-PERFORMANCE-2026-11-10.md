@@ -1,0 +1,37 @@
+# 2026-11-10 Mac ImageIO 缩小解码基准
+
+2026-11-10，同一台 Apple Silicon 电脑（Apple M5 Pro，48 GB，macOS 27.0.1）对照 `main`（dd00771，Rust 全量解码 + 缩放）与本分支（Core Graphics/ImageIO 缩小解码）。两者仅解码路径不同，界面、快捷键、评分、移动及退出同步规则不变。
+
+## 实测结果
+
+以下为中位数，单位 ms。解码每项先预热一次，再测七次；操作系统文件缓存未清空，不代表机械硬盘、网络盘或重启后的冷启动。计时包含文件读取、CPU 解码和缩放，不包含 GUI/纹理上传。
+
+| 样张与操作 | main（Rust 路径） | 本分支（ImageIO） | 耗时减少 |
+| --- | ---: | ---: | ---: |
+| big.jpg 6000×6000 缩略图 200 px | 93.927 | 35.395 | 62% |
+| big.jpg 适屏解码，固定长边 2560 | 105.992 | 85.324 | 20% |
+| big.jpg 全尺寸 6000×6000 | 81.679 | 81.925 | 未测得显著变化 |
+| small.jpg 1200×1200 缩略图 200 px | 2.867 | 2.964 | 未测得显著变化 |
+| small.jpg 适屏解码，固定长边 2560 | 2.196 | 2.267 | 未测得显著变化 |
+| sample.arw 快速小图 | 0.090 | 0.089 | 未测得显著变化 |
+| sample.arw 缩略图 200 px | 5.395 | 5.519 | 未测得显著变化 |
+| sample.arw 适屏解码 | 4.607 | 4.674 | 未测得显著变化 |
+| sample.arw 全尺寸 | 57.095 | 55.879 | 未测得显著变化 |
+
+全尺寸路径不经过缩小解码，保持原样；不要把预热命中的延迟当成解码速度。未走 ImageIO 的样张差异在单机运行噪声范围内。
+
+## 门控与未加速的解释
+
+缩小解码仅在满足既有条件时启用：非全尺寸、请求长边不超过原图长边的一半、图像像素数不低于 2 MP、色彩空间为 YCbCr/RGB/Luma。small.jpg（1.44 MP）与样张 ARW 的内嵌预览都低于 2 MP 门槛，保持原 Rust 解码路径；Sony ARW 本来就有独立的小预览，收益不明显，与 2.7.0 的 Windows 记录一致。适屏 2560 对 36 MP 样张只减少约 20%，ImageIO 在该尺寸下仍需处理大部分 DCT 块，收益小于小缩略图。
+
+## 实现
+
+- macOS 缩小 JPEG 解码改用 Core Graphics/ImageIO 的 `CGImageSourceCreateThumbnailAtIndex`，按请求长边设置 `kCGImageSourceThumbnailMaxPixelSize`，并固定 `kCGImageSourceCreateThumbnailFromImageAlways`、关闭缓存与方向变换；接口契约镜像 Windows 的 WIC 路径：任何失败返回 `None`，回退 Rust 解码。
+- 位图上下文使用图像自身色彩空间，避免色彩重映射；灰度等非 RGB 来源回退 DeviceRGB。截断或损坏文件通过 `CGImageSourceGetStatus` 检查拒绝，保持严格 Rust 解码为权威路径。
+
+## 正确性与界面检查
+
+- 本机 `cargo test --locked` 全绿：125 项库测试（含新增的 ImageIO 尺寸契约、损坏/截断回退、重复调用一致性测试，且原有缩略图色彩误差测试在 ImageIO 路径上真实执行）、集成测试 68/25/8/6/3/3/8/8 项全部通过，1 项需私人样张的既有测试跳过；Clippy 所有目标 `-D warnings` 无警告。
+- 样张为本地生成（系统壁纸经 sips 转换）与本机照片私有副本，不含私人照片内容；照片目录仅读取。
+
+原始逐次记录见 [macos-performance-2026-11-10.json](macos-performance-2026-11-10.json)。可重复基准为 `examples/decode_bench.rs`：`cargo build --release --locked --example decode_bench` 后运行 `decode_bench <照片路径> 7`；本路径不依赖 libfastcull_raw.dylib。

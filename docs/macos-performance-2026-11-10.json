@@ -1,0 +1,374 @@
+{
+  "date": "2026-11-10",
+  "machine": {
+    "chip": "Apple M5 Pro",
+    "memory_bytes": 51539607552,
+    "macos": "27.0.1"
+  },
+  "baseline": "main dd00771 (Rust full decode + resize)",
+  "branch": "macos/imageio-scaled-jpeg 66116cd (Core Graphics ImageIO scaled decode)",
+  "method": "1 warmup + 7 runs, median; OS file cache not evicted; includes file IO, decode and resize; excludes GUI/texture upload",
+  "samples": {
+    "big.jpg": "6000x6000 JPEG (36 MP), converted from a system wallpaper with sips",
+    "small.jpg": "1200x1200 JPEG (1.44 MP), below the 2 MP scaled-decode gate",
+    "sample.arw": "Sony ARW private copy from the local photo library"
+  },
+  "results": [
+    {
+      "sample": "old-big.jpg",
+      "variant": "rust-baseline",
+      "levels": {
+        "Thumb": {
+          "median_ms": 93.927,
+          "runs_ms": [
+            116.747,
+            93.927,
+            93.831,
+            94.063,
+            93.648,
+            93.427,
+            94.261,
+            101.875
+          ],
+          "size": [
+            "200x200"
+          ]
+        },
+        "Fit(2560)": {
+          "median_ms": 105.992,
+          "runs_ms": [
+            112.951,
+            105.992,
+            105.417,
+            105.137,
+            105.012,
+            107.729,
+            107.391,
+            107.895
+          ],
+          "size": [
+            "2560x2560"
+          ]
+        },
+        "Full": {
+          "median_ms": 81.679,
+          "runs_ms": [
+            84.562,
+            83.1,
+            81.619,
+            82.05,
+            81.308,
+            82.023,
+            81.679,
+            81.346
+          ],
+          "size": [
+            "6000x6000"
+          ]
+        }
+      }
+    },
+    {
+      "sample": "old-sample.arw",
+      "variant": "rust-baseline",
+      "levels": {
+        "FastThumb": {
+          "median_ms": 0.09,
+          "runs_ms": [
+            0.156,
+            0.099,
+            0.086,
+            0.098,
+            0.085,
+            0.088,
+            0.09,
+            0.092
+          ],
+          "size": [
+            "160x120"
+          ]
+        },
+        "Thumb": {
+          "median_ms": 5.395,
+          "runs_ms": [
+            5.846,
+            5.395,
+            5.435,
+            5.35,
+            5.383,
+            5.46,
+            5.409,
+            5.238
+          ],
+          "size": [
+            "200x134"
+          ]
+        },
+        "Fit(2560)": {
+          "median_ms": 4.607,
+          "runs_ms": [
+            4.517,
+            4.607,
+            4.564,
+            4.556,
+            4.591,
+            4.637,
+            4.65,
+            4.657
+          ],
+          "size": [
+            "1616x1080"
+          ]
+        },
+        "Full": {
+          "median_ms": 57.095,
+          "runs_ms": [
+            63.518,
+            57.068,
+            57.098,
+            57.095,
+            57.095,
+            56.247,
+            56.92,
+            57.193
+          ],
+          "size": [
+            "7008x4672"
+          ]
+        }
+      }
+    },
+    {
+      "sample": "old-small.jpg",
+      "variant": "rust-baseline",
+      "levels": {
+        "Thumb": {
+          "median_ms": 2.867,
+          "runs_ms": [
+            3.537,
+            3.02,
+            2.867,
+            2.902,
+            3.0,
+            2.857,
+            2.826,
+            2.858
+          ],
+          "size": [
+            "200x200"
+          ]
+        },
+        "Fit(2560)": {
+          "median_ms": 2.196,
+          "runs_ms": [
+            2.267,
+            2.192,
+            2.186,
+            2.233,
+            2.275,
+            2.196,
+            2.235,
+            2.178
+          ],
+          "size": [
+            "1200x1200"
+          ]
+        },
+        "Full": {
+          "median_ms": 2.192,
+          "runs_ms": [
+            2.167,
+            2.383,
+            2.205,
+            2.192,
+            2.182,
+            2.296,
+            2.153,
+            2.155
+          ],
+          "size": [
+            "1200x1200"
+          ]
+        }
+      }
+    },
+    {
+      "sample": "new-big.jpg",
+      "variant": "imageio",
+      "levels": {
+        "Thumb": {
+          "median_ms": 35.395,
+          "runs_ms": [
+            44.061,
+            35.247,
+            35.395,
+            35.527,
+            35.549,
+            35.075,
+            35.215,
+            35.449
+          ],
+          "size": [
+            "200x200"
+          ]
+        },
+        "Fit(2560)": {
+          "median_ms": 85.324,
+          "runs_ms": [
+            95.386,
+            83.219,
+            87.65,
+            87.593,
+            85.324,
+            86.651,
+            83.665,
+            84.935
+          ],
+          "size": [
+            "2560x2560"
+          ]
+        },
+        "Full": {
+          "median_ms": 81.925,
+          "runs_ms": [
+            87.605,
+            83.138,
+            81.925,
+            81.526,
+            81.135,
+            82.176,
+            81.212,
+            82.07
+          ],
+          "size": [
+            "6000x6000"
+          ]
+        }
+      }
+    },
+    {
+      "sample": "new-sample.arw",
+      "variant": "imageio",
+      "levels": {
+        "FastThumb": {
+          "median_ms": 0.089,
+          "runs_ms": [
+            0.144,
+            0.11,
+            0.095,
+            0.091,
+            0.089,
+            0.089,
+            0.087,
+            0.087
+          ],
+          "size": [
+            "160x120"
+          ]
+        },
+        "Thumb": {
+          "median_ms": 5.519,
+          "runs_ms": [
+            6.012,
+            5.461,
+            5.547,
+            5.631,
+            5.388,
+            5.701,
+            5.519,
+            5.431
+          ],
+          "size": [
+            "200x134"
+          ]
+        },
+        "Fit(2560)": {
+          "median_ms": 4.674,
+          "runs_ms": [
+            4.809,
+            4.681,
+            4.617,
+            4.907,
+            4.674,
+            4.694,
+            4.575,
+            4.646
+          ],
+          "size": [
+            "1616x1080"
+          ]
+        },
+        "Full": {
+          "median_ms": 55.879,
+          "runs_ms": [
+            63.04,
+            56.565,
+            56.037,
+            56.144,
+            55.777,
+            55.739,
+            55.669,
+            55.879
+          ],
+          "size": [
+            "7008x4672"
+          ]
+        }
+      }
+    },
+    {
+      "sample": "new-small.jpg",
+      "variant": "imageio",
+      "levels": {
+        "Thumb": {
+          "median_ms": 2.964,
+          "runs_ms": [
+            3.383,
+            3.225,
+            3.093,
+            2.911,
+            3.173,
+            2.963,
+            2.919,
+            2.964
+          ],
+          "size": [
+            "200x200"
+          ]
+        },
+        "Fit(2560)": {
+          "median_ms": 2.267,
+          "runs_ms": [
+            2.241,
+            2.219,
+            2.428,
+            2.362,
+            2.267,
+            2.22,
+            2.33,
+            2.259
+          ],
+          "size": [
+            "1200x1200"
+          ]
+        },
+        "Full": {
+          "median_ms": 2.223,
+          "runs_ms": [
+            2.207,
+            2.224,
+            2.231,
+            2.223,
+            2.201,
+            2.252,
+            2.197,
+            2.161
+          ],
+          "size": [
+            "1200x1200"
+          ]
+        }
+      }
+    }
+  ]
+}
