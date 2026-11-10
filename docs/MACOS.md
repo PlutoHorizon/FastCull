@@ -64,7 +64,7 @@ GitHub Actions 的 **macOS build** 工作流提供两个架构的独立构建和
 
 工作流还会自动打开实际 RAW 编辑窗口，以合成 DNG 完成适屏显影、曝光/WB/七项调整、全尺寸和保存，检查 XMP 与回执，并生成四张 GPU 窗口截图。截图和日志在每个架构的 `validation` Artifact 中供核对；该自动流程不代替 Finder 双击、手动交互、多窗口及 Adobe 宿主验收。
 
-Mac 缩小 JPEG 解码（Core Graphics/ImageIO）用仓库内合成样片覆盖尺寸契约、不透明 alpha、损坏与截断输入的回退；真实样张的耗时对照见 [MAC-PERFORMANCE-2026-11-10.md](MAC-PERFORMANCE-2026-11-10.md)。未覆盖全部相机机型、ICC 色彩配置文件组合、冷启动与所有 JPEG 变体；不代替人工界面验收。
+Mac 缩小 JPEG 解码（Core Graphics/ImageIO）用仓库内合成样片覆盖尺寸契约、非对称四象限方向回归（横竖排布与 EXIF Orientation=6，含生产入口跨层级对照）、不透明 alpha、损坏与截断输入的回退；真实样张的耗时对照见 [MAC-PERFORMANCE-2026-11-10.md](MAC-PERFORMANCE-2026-11-10.md)。未覆盖全部相机机型、ICC 色彩配置文件组合、冷启动与所有 JPEG 变体；不代替人工界面验收。
 
 首次对外发布前，需在 Apple Silicon 和 Intel Mac 上逐项验收：
 

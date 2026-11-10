@@ -28,6 +28,7 @@
 
 - macOS 缩小 JPEG 解码改用 Core Graphics/ImageIO 的 `CGImageSourceCreateThumbnailAtIndex`，按请求长边设置 `kCGImageSourceThumbnailMaxPixelSize`，并固定 `kCGImageSourceCreateThumbnailFromImageAlways`、关闭缓存与方向变换；接口契约镜像 Windows 的 WIC 路径：任何失败返回 `None`，回退 Rust 解码。
 - 位图上下文使用图像自身色彩空间，避免色彩重映射；灰度等非 RGB 来源回退 DeviceRGB。截断或损坏文件通过 `CGImageSourceGetStatus` 检查拒绝，保持严格 Rust 解码为权威路径。
+- 审查修订（2026-11-10）：以 2×2 原生探针（首行红、次行蓝）实测位图上下文行序，确认 plain 绘制的缓冲区首行即图像首行，移除了最初多余的 CTM 翻转；原测试样片为纯色图无法检测镜像，新增非对称四象限样片（5120×2048、2048×5120 与 EXIF Orientation=6 变体）的方向回归，覆盖直接入口与生产入口的 200/2560 请求，返回 None 显式失败。
 
 ## 同机补充：其他维度的 Mac 实测
 
@@ -46,7 +47,7 @@ RAW 传感器解码需要 libfastcull_raw.dylib；本机按 `scripts/build-macos
 
 ## 正确性与界面检查
 
-- 本机 `cargo test --locked` 全绿：125 项库测试（含新增的 ImageIO 尺寸契约、损坏/截断回退、重复调用一致性测试，且原有缩略图色彩误差测试在 ImageIO 路径上真实执行）、集成测试 68/25/8/6/3/3/8/8 项全部通过，1 项需私人样张的既有测试跳过；Clippy 所有目标 `-D warnings` 无警告。
+- 本机 `cargo test --locked` 全绿：125 项库测试（含新增的 ImageIO 尺寸契约、非对称四象限方向回归、EXIF Orientation 处理、损坏/截断回退、重复调用一致性测试，且原有缩略图色彩误差测试在 ImageIO 路径上真实执行）、集成测试 68/25/8/6/3/3/8/8 项全部通过，1 项需私人样张的既有测试跳过；Clippy 所有目标 `-D warnings` 无警告。
 - 样张为本地生成（系统壁纸经 sips 转换）与本机照片私有副本，不含私人照片内容；照片目录仅读取。
 
 原始逐次记录见 [macos-performance-2026-11-10.json](macos-performance-2026-11-10.json)。可重复基准为 `examples/decode_bench.rs`：`cargo build --release --locked --example decode_bench` 后运行 `decode_bench <照片路径> 7`；本路径不依赖 libfastcull_raw.dylib。冷启动、Intel 架构与更多机型未测。

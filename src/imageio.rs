@@ -92,8 +92,6 @@ unsafe extern "C" {
     fn CGImageGetHeight(image: CGImageRef) -> usize;
     fn CGImageGetWidth(image: CGImageRef) -> usize;
     fn CGContextDrawImage(context: CGContextRef, rect: CGRect, image: CGImageRef);
-    fn CGContextScaleCTM(context: CGContextRef, sx: f64, sy: f64);
-    fn CGContextTranslateCTM(context: CGContextRef, tx: f64, ty: f64);
 }
 
 /// Decode a JPEG into at least `width` × `height` RGBA8 pixels with ImageIO's
@@ -204,10 +202,10 @@ pub(crate) fn scaled_jpeg(bytes: &[u8], width: u32, height: u32) -> Option<Pixel
                 return None;
             }
         }
-        // ImageIO images draw with their first row at the top; a bitmap
-        // context stores row 0 at the origin (bottom), so flip vertically.
-        CGContextTranslateCTM(context, 0.0, h as f64);
-        CGContextScaleCTM(context, 1.0, -1.0);
+        // A bitmap context stores the first buffer row at the TOP of the
+        // canvas, so a plain draw already lands top-down, matching CGImage
+        // and JPEG row order. Verified with a native 2x2 red/blue probe:
+        // flipping the CTM here mirrors the output vertically.
         CGContextDrawImage(
             context,
             CGRect {
@@ -247,6 +245,135 @@ pub(crate) fn scaled_jpeg(bytes: &[u8], width: u32, height: u32) -> Option<Pixel
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sample the RGB triple at a relative position of the pixel buffer.
+    fn rgb_at(p: &Pixels, fx: f64, fy: f64) -> [u8; 3] {
+        let x = ((p.width as f64 - 1.0) * fx).round() as usize;
+        let y = ((p.height as f64 - 1.0) * fy).round() as usize;
+        let i = (y * p.width + x) * 4;
+        [p.rgba[i], p.rgba[i + 1], p.rgba[i + 2]]
+    }
+
+    /// The asymmetric fixtures carry four quadrants (red/green top row,
+    /// blue/yellow bottom row) plus distinct white top and dark bottom
+    /// marker strips, so any vertical mirror or rotation shifts colors.
+    fn assert_quadrants(p: &Pixels, context: &str) {
+        let expected = [
+            (0.3, 0.3, [255u8, 0, 0]),
+            (0.7, 0.3, [0, 255, 0]),
+            (0.3, 0.7, [0, 0, 255]),
+            (0.7, 0.7, [255, 255, 0]),
+        ];
+        for (fx, fy, want) in expected {
+            let got = rgb_at(p, fx, fy);
+            assert!(
+                got.iter().zip(want).all(|(a, b)| a.abs_diff(b) <= 45),
+                "{context}: sample ({fx},{fy}) got {got:?}, want {want:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn imageio_scaled_jpeg_preserves_quadrant_layout_against_rust_reference() {
+        for (name, bytes) in [
+            (
+                "asym-5120x2048.jpg",
+                include_bytes!("../tests/fixtures/asym-5120x2048.jpg").as_slice(),
+            ),
+            (
+                "asym-2048x5120.jpg",
+                include_bytes!("../tests/fixtures/asym-2048x5120.jpg").as_slice(),
+            ),
+        ] {
+            let reference = crate::imaging::decode_jpeg_bytes(bytes, crate::imaging::Level::Full)
+                .expect("Rust reference decode");
+            assert_quadrants(
+                &Pixels {
+                    width: reference.width,
+                    height: reference.height,
+                    rgba: reference.rgba.clone(),
+                },
+                &format!("{name} rust reference"),
+            );
+            // Proportional requests mirror what `imaging` derives from the
+            // fixture edges: the long side targets 200 and 2560 exactly.
+            let requests: [(u32, u32); 2] = if name == "asym-5120x2048.jpg" {
+                [(200, 80), (2560, 1024)]
+            } else {
+                [(80, 200), (1024, 2560)]
+            };
+            for (width, height) in requests {
+                let Some(p) = scaled_jpeg(bytes, width, height) else {
+                    panic!("{name}: ImageIO scaled decode unavailable at {width}x{height}");
+                };
+                assert!(
+                    p.width >= width as usize && p.height >= height as usize,
+                    "{name}: {0}x{1} below request {width}x{height}",
+                    p.width,
+                    p.height
+                );
+                assert_quadrants(&p, &format!("{name} imageio {width}x{height}"));
+            }
+        }
+    }
+
+    #[test]
+    fn imageio_scaled_jpeg_ignores_exif_orientation() {
+        // Orientation 6 means "rotate 90 degrees on display"; with
+        // WithTransform=false the stored row order must come back untouched,
+        // so the red quadrant stays top-left and the reference agrees.
+        let bytes = include_bytes!("../tests/fixtures/asym-exif6-5120x2048.jpg");
+        let reference = crate::imaging::decode_jpeg_bytes(bytes, crate::imaging::Level::Full)
+            .expect("Rust reference decode");
+        assert_quadrants(
+            &Pixels {
+                width: reference.width,
+                height: reference.height,
+                rgba: reference.rgba.clone(),
+            },
+            "exif6 rust reference",
+        );
+        let Some(p) = scaled_jpeg(bytes, 200, 80) else {
+            panic!("ImageIO scaled decode unavailable for the EXIF 6 fixture");
+        };
+        assert_quadrants(&p, "exif6 imageio");
+    }
+
+    #[test]
+    fn production_scaled_jpeg_matches_rust_reference_across_levels() {
+        // The production entry must resolve on macOS in tests; a None here
+        // means the ImageIO path is missing and the fallback would hide it.
+        let bytes = include_bytes!("../tests/fixtures/asym-5120x2048.jpg");
+        let Some(p) = crate::native_raw::scaled_jpeg(bytes, 200, 80) else {
+            panic!("production scaled_jpeg returned None; ImageIO path missing");
+        };
+        assert_quadrants(&p, "production entry 200px");
+        let Some(p) = crate::native_raw::scaled_jpeg(bytes, 2560, 1024) else {
+            panic!("production scaled_jpeg returned None at 2560px");
+        };
+        assert_quadrants(&p, "production entry 2560px");
+        // Full stays a Rust decode; the levels must agree on the quadrant
+        // layout (within JPEG decoder rounding) so switching resolutions
+        // never mirrors the preview.
+        let full = crate::imaging::decode_jpeg_bytes(bytes, crate::imaging::Level::Full)
+            .expect("Rust full decode");
+        let full = Pixels {
+            width: full.width,
+            height: full.height,
+            rgba: full.rgba,
+        };
+        for (fx, fy) in [(0.3, 0.3), (0.7, 0.3), (0.3, 0.7), (0.7, 0.7)] {
+            let scaled = rgb_at(&p, fx, fy);
+            let reference = rgb_at(&full, fx, fy);
+            assert!(
+                scaled
+                    .iter()
+                    .zip(reference)
+                    .all(|(a, b)| a.abs_diff(b) <= 45),
+                "level layout differs at ({fx},{fy}): {scaled:?} vs {reference:?}"
+            );
+        }
+    }
 
     #[test]
     fn imageio_scaled_jpeg_honors_dimension_contract() {
