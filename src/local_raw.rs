@@ -27,8 +27,16 @@ pub struct SceneRendered {
     pub frame: crate::raw_color::Frame,
     pub timings: Timings,
 }
+static DECODE: crate::raw_decode_cache::Cache = crate::raw_decode_cache::Cache::new();
+pub fn release_idle_cache() {
+    cancel_pending();
+    DECODE.clear();
+    native_raw::release_idle();
+}
 /// High-precision editor path. No exposure, Look, tone or sRGB encoding is baked
 /// into the returned ProPhoto pixels; those operations share one display recipe.
+/// Full GPU frames may carry a pending camera HueSatMap; CPU bitmap exporters
+/// must call Frame::materialize_hue_sat before consuming those pixels directly.
 pub fn render_scene(request: &SceneRequest) -> Result<SceneRendered> {
     let started = Instant::now();
     let generation = GENERATION.load(Ordering::Acquire);
@@ -44,33 +52,99 @@ pub fn render_scene(request: &SceneRequest) -> Result<SceneRendered> {
         .filter(|w| w.mode.as_deref() != Some("As Shot"));
     let temperature = wb.and_then(|w| w.temperature).map(f64::from);
     let tint = wb.and_then(|w| w.tint).map(f64::from).unwrap_or(0.);
-    let decoded = native_raw::develop_linear(
-        &request.source,
-        &native_raw::DevelopSettings {
-            max_edge: request.max_edge,
-            temperature,
-            tint,
-            exposure: 0.,
-        },
-        &cancelled,
-    )?;
+    let settings = native_raw::DevelopSettings {
+        max_edge: request.max_edge,
+        temperature,
+        tint,
+        exposure: 0.,
+    };
+    let decoded = DECODE.develop(&request.source, &settings, &cancelled, || {
+        native_raw::develop_linear(&request.source, &settings, &cancelled)
+    })?;
+    // t_unpack is derived from the decode-completion clock minus the native
+    // post-processing time; only meaningful for a fresh (non-reused) decode.
+    let decode_done_us = crate::raw_trace::unix_us();
+    let file_bytes = fs::metadata(&request.source).map(|m| m.len()).unwrap_or(0);
+    if !decoded.reused {
+        crate::raw_trace::add_io(file_bytes);
+    }
+    crate::raw_trace::event(
+        "decode_done",
+        vec![
+            ("reused", decoded.reused.to_string()),
+            ("open_ms", format!("{:.3}", decoded.source.open_ms)),
+            ("unpack_ms", format!("{:.3}", decoded.source.unpack_ms)),
+            ("process_ms", format!("{:.3}", decoded.source.process_ms)),
+            (
+                "unpack_done_unix_us",
+                if decoded.reused {
+                    decode_done_us
+                } else {
+                    decode_done_us
+                        .saturating_sub((decoded.source.process_ms * 1000.).round() as u64)
+                }
+                .to_string(),
+            ),
+            ("width", decoded.source.width.to_string()),
+            ("height", decoded.source.height.to_string()),
+            ("rgb_pixels", decoded.source.rgb.len().to_string()),
+            ("file_bytes", file_bytes.to_string()),
+            ("max_edge", request.max_edge.to_string()),
+        ],
+    );
     let mut timings = Timings {
-        raw_open_ms: decoded.open_ms,
-        metadata_ms: decoded.open_ms,
-        unpack_ms: decoded.unpack_ms,
-        process_ms: decoded.process_ms,
+        raw_open_ms: if decoded.reused {
+            0.
+        } else {
+            decoded.source.open_ms
+        },
+        metadata_ms: if decoded.reused {
+            0.
+        } else {
+            decoded.source.open_ms
+        },
+        unpack_ms: if decoded.reused {
+            0.
+        } else {
+            decoded.source.unpack_ms
+        },
+        process_ms: if decoded.reused {
+            0.
+        } else {
+            decoded.source.process_ms
+        },
         ..Default::default()
     };
     let color_started = Instant::now();
     let frame = crate::raw_color::prepare_from_path(
         &request.source,
-        decoded,
+        decoded.source,
         &values,
         request.max_edge,
         &cancelled,
     )?;
     timings.profile_ms = color_started.elapsed().as_secs_f64() * 1000.;
     timings.wall_ms = started.elapsed().as_secs_f64() * 1000.;
+    let mut fields = vec![
+        ("reused", decoded.reused.to_string()),
+        ("wall_ms", format!("{:.3}", timings.wall_ms)),
+        ("open_ms", format!("{:.3}", timings.raw_open_ms)),
+        ("unpack_ms", format!("{:.3}", timings.unpack_ms)),
+        ("process_ms", format!("{:.3}", timings.process_ms)),
+        ("profile_ms", format!("{:.3}", timings.profile_ms)),
+        ("width", frame.size[0].to_string()),
+        ("height", frame.size[1].to_string()),
+        ("pixels", frame.pixels.len().to_string()),
+        (
+            "pending_hue_sat",
+            frame.pending_hue_sat.is_some().to_string(),
+        ),
+        ("profile_fingerprint", frame.profile_fingerprint.to_string()),
+    ];
+    #[cfg(any(windows, target_os = "macos"))]
+    fields.push(("resident", frame.resident.is_some().to_string()));
+    fields.extend(crate::raw_trace::counters());
+    crate::raw_trace::event("scene_build", fields);
     Ok(SceneRendered { frame, timings })
 }
 #[derive(Clone, Debug, Default)]

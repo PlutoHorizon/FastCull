@@ -10,6 +10,7 @@ struct Params {
     look_dims: vec4<f32>,
     display_info: vec4<f32>,
     extra_look_dims: vec4<f32>,
+    hue_sat_dims: vec4<f32>,
 }
 @group(0) @binding(0) var image: texture_2d<f32>;
 @group(0) @binding(1) var<storage, read> curve: array<f32>;
@@ -39,7 +40,7 @@ fn output_color(x: vec3<f32>) -> vec4<f32> {
     if p.display_info.y > 0.5 { return vec4<f32>(decode_rgb(x), 1); }
     return vec4<f32>(x, 1);
 }
-fn sample_image(uv: vec2<f32>) -> vec3<f32> {
+fn sample_raw(uv: vec2<f32>) -> vec3<f32> {
     // Explicit bilinear sampling supports RGBA32Float without requesting the
     // optional FLOAT32_FILTERABLE feature. Clamp exactly at texel edges.
     let size = vec2<i32>(textureDimensions(image));
@@ -52,6 +53,19 @@ fn sample_image(uv: vec2<f32>) -> vec3<f32> {
     let x2 = textureLoad(image, clamp(a + vec2<i32>(0, 1), lo, hi), 0).rgb;
     let x3 = textureLoad(image, clamp(a + vec2<i32>(1), lo, hi), 0).rgb;
     return mix(mix(x0, x1, f.x), mix(x2, x3, f.x), f.y);
+}
+fn sample_image(uv:vec2<f32>)->vec3<f32> {
+    if(p.hue_sat_dims.x<1.) {return sample_raw(uv);}
+    let size=vec2<i32>(textureDimensions(image));let q=uv*vec2<f32>(size)-vec2<f32>(0.5);
+    let a=vec2<i32>(floor(q));let f=fract(q);
+    var taps:array<vec3<f32>,4>;
+    // Keep the tap count in uniforms so the driver does not inline four copies
+    // of the nonlinear map at first pipeline compilation.
+    for(var i=0u;i<min(u32(p.display_info.w),4u);i++) {
+        let offset=vec2<i32>(i32(i&1u),i32(i>>1u));
+        taps[i]=hue_sat(textureLoad(image,clamp(a+offset,vec2<i32>(0),size-vec2<i32>(1)),0).rgb);
+    }
+    return mix(mix(taps[0],taps[1],f.x),mix(taps[2],taps[3],f.x),f.y);
 }
 fn positive_mod(x: f32, y: f32) -> f32 { return x - y * floor(x / y); }
 fn rgb_hsv(x: vec3<f32>) -> vec3<f32> {
@@ -73,6 +87,37 @@ fn hsv_rgb(hsv: vec3<f32>) -> vec3<f32> {
     else if h < 3.0 { a = vec3<f32>(0,c,x); } else if h < 4.0 { a = vec3<f32>(0,x,c); }
     else if h < 5.0 { a = vec3<f32>(x,0,c); } else { a = vec3<f32>(c,0,x); }
     return a + vec3<f32>(hsv.z - c);
+}
+fn hsm_cell(h:u32,s:u32,v:u32)->vec3<f32> {
+    let dims=vec3<u32>(p.hue_sat_dims.xyz);
+    let offset=u32(p.display_info.z)+u32(p.extra_look_dims.x*p.extra_look_dims.y*p.extra_look_dims.z);
+    return look_table[offset+(v*dims.x+h)*dims.y+s].rgb;
+}
+fn hsm_lerp(a:vec3<f32>,b:vec3<f32>,t:f32)->vec3<f32> {return a+(b-a)*t;}
+fn hsm_layer(h0:u32,h1:u32,s0:u32,v:u32,fh:f32,fs:f32)->vec3<f32> {
+    return hsm_lerp(hsm_lerp(hsm_cell(h0,s0,v),hsm_cell(h1,s0,v),fh),hsm_lerp(hsm_cell(h0,s0+1u,v),hsm_cell(h1,s0+1u,v),fh),fs);
+}
+// Camera HueSatMap is applied per source texel BEFORE display interpolation.
+// It preserves the CPU map's neutral/negative handling and HDR value scale.
+fn hue_sat(rgb:vec3<f32>)->vec3<f32> {
+    if(p.hue_sat_dims.x<1.) {return rgb;}
+    let hi=max(rgb.r,max(rgb.g,rgb.b));let lo=min(rgb.r,min(rgb.g,rgb.b));let delta=hi-lo;
+    if(hi<=0. || delta<=1e-12){return rgb;}
+    let sat=clamp(delta/hi,0.,1.);if(sat<=1e-7){return rgb;}
+    var hue=0.;
+    if(hi==rgb.r){hue=(rgb.g-rgb.b)/delta;}else if(hi==rgb.g){hue=(rgb.b-rgb.r)/delta+2.;}else{hue=(rgb.r-rgb.g)/delta+4.;}
+    hue=positive_mod(hue*60.,360.);
+    let dims=vec3<u32>(p.hue_sat_dims.xyz);let encoded=p.hue_sat_dims.w>0.5 && dims.z>1u;
+    var value=hi;if(encoded){value=encode_s(value);}
+    let h=hue/360.*f32(dims.x);let h0=u32(floor(h))%dims.x;let h1=(h0+1u)%dims.x;let fh=fract(h);
+    let s=clamp(sat,0.,1.)*f32(dims.y-1u);let s0=min(u32(floor(s)),dims.y-2u);let fs=s-f32(s0);
+    var entry=hsm_layer(h0,h1,s0,0u,fh,fs);
+    if(dims.z>1u){
+        let v=clamp(value,0.,1.)*f32(dims.z-1u);let v0=min(u32(floor(v)),dims.z-2u);
+        entry=hsm_lerp(hsm_layer(h0,h1,s0,v0,fh,fs),hsm_layer(h0,h1,s0,v0+1u,fh,fs),v-f32(v0));
+    }
+    hue=positive_mod(hue+entry.x,360.);value*=entry.z;if(encoded){value=decode_s(value);}
+    return hsv_rgb(vec3<f32>(hue/60.,clamp(sat*entry.y,0.,1.),value));
 }
 fn apply_look(rgb: vec3<f32>, info: vec4<f32>, offset: u32) -> vec3<f32> {
     var hsv = rgb_hsv(max(rgb, vec3<f32>(0)));
@@ -96,8 +141,13 @@ fn apply_look(rgb: vec3<f32>, info: vec4<f32>, offset: u32) -> vec3<f32> {
     return hsv_rgb(hsv);
 }
 fn curve_value(input: f32) -> f32 {
-    // Exposure precedes SDR clipping; the profile curve supplies its own tone.
-    let x = clamp(input, 0.0, 1.0);
+    // Compose both range-endpoint mappings before the one RGB interpolation.
+    var value=input;
+    if p.chroma.w>0.0 && value>0.5 {
+        let above=value-0.5;
+        value=0.5+above/(1.0+p.chroma.w*above);
+    }
+    let x = clamp(value, 0.0, 1.0);
     let n = u32(p.display_info.x); let q = clamp(x,0.0,1.0)*f32(n-1u);
     let i = min(u32(q),n-1u); let j = min(i+1u,n-1u);
     return mix(curve[i],curve[j],fract(q));
@@ -124,7 +174,7 @@ fn curve_value(input: f32) -> f32 {
 }
 @fragment fn fs_jpeg(in: Vertex) -> @location(0) vec4<f32> {
     if any(in.uv < vec2<f32>(0)) || any(in.uv > vec2<f32>(1)) { return vec4<f32>(0,0,0,1); }
-    let linear=clamp(decode_rgb(sample_image(in.uv))*p.wb_gain.w*p.wb_gain.xyz,vec3<f32>(0),vec3<f32>(1));
+    let linear=clamp(decode_rgb(sample_raw(in.uv))*p.wb_gain.w*p.wb_gain.xyz,vec3<f32>(0),vec3<f32>(1));
     var x=encode_rgb(linear); var y=dot(x,vec3<f32>(0.2126,0.7152,0.0722));
     let lift=p.tone.z*pow(1.0-y,2.0)*0.35+p.tone.y*y*y*0.35+p.tone.w*pow(y,4.0)*0.25+p.chroma.x*pow(1.0-y,4.0)*0.25;
     x=clamp((x-vec3<f32>(0.5))*(1.0+p.tone.x*0.8)+vec3<f32>(0.5+lift),vec3<f32>(0),vec3<f32>(1));

@@ -114,6 +114,12 @@ class DistributionTests(unittest.TestCase):
 
 
 class SourceManifestTests(unittest.TestCase):
+    def test_windows_payload_includes_openmp_runtime_and_registration_keeps_it(self):
+        self.assertIn('vcomp140.dll', release.BINARIES)
+        registration = (ROOT/'scripts/register-integrations.ps1').read_text(encoding='utf-8-sig')
+        self.assertIn("'vcomp140.dll'", registration)
+        self.assertIn("'organization.lua'", registration)
+
     def test_source_manifest_is_complete_and_excludes_private_outputs(self):
         paths = release.source_paths()
         for required in ['scripts/adobe-raw-render.ps1', 'bridge/FastCullRawRender.jsx',
@@ -125,6 +131,11 @@ class SourceManifestTests(unittest.TestCase):
                          'native/white_balance.h', 'native/white_balance_table.inc',
                          'docs/COLOR-PIPELINE.md', 'src/dcp.rs', 'src/raw_color.rs',
                          'src/raw_preview.wgsl', 'src/raw_preview_wgpu.rs',
+                         'src/raw_compute.wgsl', 'src/raw_compute.rs',
+                         'src/raw_ahd.wgsl', 'src/raw_ahd.rs', 'examples/raw_demosaic_probe.rs',
+                         'src/raw_entropy.rs', 'src/raw_entropy_gpu.rs', 'src/raw_entropy.wgsl',
+                         'examples/raw_entropy_probe.rs', 'tests/raw_entropy.rs',
+                         'examples/raw_frame_probe.rs',
                          'src/raw_preview_gl.rs', 'src/exposure_preview_gl.rs',
                          'src/embedded_profile.rs', 'src/macos_color.rs',
                          'src/enhanced_profile.rs', 'src/raw_profiles.rs',

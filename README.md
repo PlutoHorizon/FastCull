@@ -1,6 +1,6 @@
 # FastCull
 
-轻量 RAW/JPEG 选片器，使用 Rust 开发，可独立运行，也可从 Adobe Bridge 和 Lightroom Classic 打开。2.10.0 提供 Windows 安装与注册包，以及 macOS Apple Silicon / Intel 独立构建包；Mac 桌面与 Adobe 宿主的人工验收范围见下文。
+轻量 RAW/JPEG 选片器，使用 Rust 开发，可独立运行，也可从 Adobe Bridge 和 Lightroom Classic 打开。2.11.0 提供 Windows 安装与注册包，以及 macOS Apple Silicon / Intel 独立构建包；Mac 桌面与 Adobe 宿主的人工验收范围见下文。
 
 A fast RAW/JPEG photo culler with local RAW development, Adobe Bridge and Lightroom Classic integration. Windows installer and separate Apple Silicon / Intel macOS packages.
 
@@ -44,6 +44,7 @@ macOS 的构建、安装和验证范围见 [macOS 说明](docs/MACOS.md)。下�
 独立打开程序后选择照片或文件夹，或将文件/文件夹拖入窗口。支持 **Sony ARW、Canon CR2、Nikon NEF、DNG、JPG/JPEG**；自动跳过其他类型。DNG 优先按 TIFF 索引直接读取内嵌 JPEG，网格选小预览、适屏选大预览，避免普通浏览时解码传感器数据；无可用 JPEG 时回退 LibRaw。预览尺寸由机型和拍摄设置决定，不保证与 RAW 传感器分辨率相同，100% 查看会检查有效输出尺寸。详见 [DNG 支持与性能](docs/DNG.md)。
 
 - **E / G / C**：单图、网格、对比。左右方向键切图；缩略图栏内滚轮快速切图。
+- **外观**：在窗口顶部选择浅色模式、深色模式或跟随系统，即时切换并自动保存。欢迎页、选片、裁切和独立 RAW 编辑共用平面化样式；已打开的窗口会同步外观选择。
 - 支持星级、旗标、颜色及拍摄元数据筛选；支持曝光快速调整和双图独立/联动查看。
 - 100% 查看支持点击位置放大，切图保留相对查看位置。
 - **T / 裁切**：自由与固定比例裁切、自定义比例预设、角度微调及 90° 旋转；编辑结果保存在 XMP，移动照片时一起携带。详见 [裁切说明](docs/CROPPING.md)。

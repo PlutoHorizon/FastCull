@@ -10,7 +10,7 @@ use fastcull::{
 use std::{
     collections::VecDeque,
     fs,
-    io::Write,
+    io::{BufRead, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -36,6 +36,13 @@ fn encode_path(path: &Path) -> Result<String> {
     ))
 }
 impl Request {
+    fn placeholder() -> Self {
+        Self {
+            source: PathBuf::new(),
+            receipt: PathBuf::new(),
+            catalog: None,
+        }
+    }
     fn write(&self, path: &Path) -> Result<()> {
         let (mailbox, id) = self
             .catalog
@@ -154,9 +161,11 @@ struct Open {
     index: usize,
     catalog: Option<(PathBuf, String)>,
     ctx: egui::Context,
+    started: std::time::SystemTime,
 }
 enum Message {
     Open(Open),
+    Prewarm,
     Drain(mpsc::Sender<std::result::Result<(), String>>),
 }
 struct Worker {
@@ -199,10 +208,29 @@ impl Windows {
                 index,
                 catalog,
                 ctx: ctx.clone(),
+                started: std::time::SystemTime::now(),
             }))
             .is_err()
         {
             self.busy.store(false, Ordering::Release);
+        }
+    }
+    /// Start the session-scoped editor process ahead of the first open. The
+    /// hidden editor creates the window, GPU device and display pipelines once;
+    /// a later open is submitted through the same private stdin pipe.
+    pub fn prewarm(&self) {
+        #[cfg(windows)]
+        {
+            if std::env::var("FASTCULL_RAW_PREWARM").is_ok_and(|v| v == "0") {
+                return;
+            }
+            let mut worker = self.worker.lock().unwrap();
+            if worker.is_none() {
+                *worker = Some(start(self.session.clone(), self.busy.clone()));
+            }
+            if let Some(worker) = worker.as_ref() {
+                let _ = worker.send.send(Message::Prewarm);
+            }
         }
     }
     pub fn busy(&self) -> bool {
@@ -241,7 +269,7 @@ impl Windows {
     }
 }
 struct Active {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     request: Request,
     index: usize,
     directory: Option<tempfile::TempDir>,
@@ -252,7 +280,15 @@ struct Active {
 }
 impl Drop for Active {
     fn drop(&mut self) {
-        let unfinished = self.child.try_wait().ok().flatten().is_none();
+        let unfinished = !self.done
+            && self
+                .child
+                .lock()
+                .unwrap()
+                .try_wait()
+                .ok()
+                .flatten()
+                .is_none();
         let pending = receipt_files(&self.request).map_or(true, |files| !files.is_empty());
         if (unfinished || pending || self.error.is_some())
             && let Some(directory) = self.directory.take()
@@ -309,7 +345,7 @@ fn consume_receipts(
     }
     Ok(())
 }
-fn launch(job: Open) -> Result<Active> {
+fn launch(job: Open, server: &mut Option<Arc<Mutex<Child>>>) -> Result<Active> {
     ensure!(job.path.is_file(), "RAW 文件不存在：{}", job.path.display());
     let root = platform::data_directory().join("raw-editor/windows");
     fs::create_dir_all(&root)?;
@@ -323,23 +359,80 @@ fn launch(job: Open) -> Result<Active> {
     };
     let input = directory.path().join("request.txt");
     request.write(&input)?;
-    let mut command = Command::new(std::env::current_exe()?);
-    command
-        .arg("--raw-editor")
-        .arg(input)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
+    fs::write(
+        directory.path().join("open-start-us.txt"),
+        job.started
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_micros()
+            .to_string(),
+    )?;
+    // One child belongs to this culling session. The private stdin pipe avoids
+    // global discovery, shared sockets and another session stealing requests.
+    if server
+        .as_ref()
+        .is_some_and(|c| c.lock().unwrap().try_wait().ok().flatten().is_some())
     {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x00000200 | 0x00000008);
+        *server = None;
     }
-    let child = command.spawn().context("无法打开独立 RAW 编辑窗口")?;
+    let reused = server.is_some();
+    let child = if let Some(child) = server.as_ref() {
+        let mut process = child.lock().unwrap();
+        writeln!(
+            process.stdin.as_mut().context("RAW server pipe closed")?,
+            "{}",
+            encode_path(&input)?
+        )?;
+        child.clone()
+    } else {
+        let mut command = Command::new(std::env::current_exe()?);
+        command
+            .arg(if cfg!(windows) {
+                "--raw-editor-server"
+            } else {
+                "--raw-editor"
+            })
+            .arg(input)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x00000200 | 0x00000008);
+        }
+        let child = Arc::new(Mutex::new(
+            command.spawn().context("无法打开独立 RAW 编辑窗口")?,
+        ));
+        #[cfg(windows)]
+        {
+            *server = Some(child.clone());
+        }
+        child
+    };
+    let child_pid = child.lock().unwrap().id();
     #[cfg(windows)]
     unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(child.id());
+        windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(child_pid);
     }
+    fastcull::raw_trace::event(
+        "open_requested",
+        vec![
+            (
+                "source",
+                fastcull::raw_trace::string(&request.source.to_string_lossy()),
+            ),
+            (
+                "started_unix_us",
+                job.started
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_micros())
+                    .unwrap_or(0)
+                    .to_string(),
+            ),
+            ("reused_server", reused.to_string()),
+            ("editor_pid", child_pid.to_string()),
+        ],
+    );
     Ok(Active {
         child,
         request,
@@ -351,6 +444,24 @@ fn launch(job: Open) -> Result<Active> {
         ctx: job.ctx,
     })
 }
+#[cfg(windows)]
+fn spawn_idle() -> Result<Arc<Mutex<Child>>> {
+    use std::os::windows::process::CommandExt;
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .arg("--raw-editor-idle")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(0x00000200 | 0x00000008);
+    Ok(Arc::new(Mutex::new(
+        command.spawn().context("无法预启动 RAW 编辑进程")?,
+    )))
+}
+#[cfg(not(windows))]
+fn spawn_idle() -> Result<Arc<Mutex<Child>>> {
+    anyhow::bail!("RAW editor prewarm is Windows-only")
+}
 fn start(session: Option<Arc<Session>>, busy: Arc<AtomicBool>) -> Worker {
     let (send, jobs) = mpsc::channel();
     let (events, receive) = mpsc::channel();
@@ -358,6 +469,7 @@ fn start(session: Option<Arc<Session>>, busy: Arc<AtomicBool>) -> Worker {
         .name("raw-window-monitor".into())
         .spawn(move || {
             let mut active: Vec<Active> = Vec::new();
+            let mut server = None;
             let mut drain = None;
             loop {
                 match jobs.recv_timeout(Duration::from_millis(100)) {
@@ -366,7 +478,7 @@ fn start(session: Option<Arc<Session>>, busy: Arc<AtomicBool>) -> Worker {
                         let result = if active.iter().any(|a| a.request.source == job.path) {
                             Err(anyhow::anyhow!("该照片已在 RAW 编辑窗口中打开"))
                         } else {
-                            launch(job)
+                            launch(job, &mut server)
                         };
                         match result {
                             Ok(a) => active.push(a),
@@ -377,14 +489,46 @@ fn start(session: Option<Arc<Session>>, busy: Arc<AtomicBool>) -> Worker {
                             }
                         }
                     }
-                    Ok(Message::Drain(sender)) => drain = Some(sender),
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    Ok(Message::Prewarm) => {
+                        let alive = server.as_ref().is_some_and(|child| {
+                            child.lock().unwrap().try_wait().ok().flatten().is_none()
+                        });
+                        if !alive {
+                            if server.take().is_some() {
+                                // Drop only the exited handle; the editor already
+                                // released its device and files.
+                            }
+                            match spawn_idle() {
+                                Ok(child) => {
+                                    fastcull::raw_trace::event("editor_prewarmed", Vec::new());
+                                    server = Some(child);
+                                }
+                                Err(error) => log::warn!("RAW prewarm failed: {error:#}"),
+                            }
+                        }
+                    }
+                    Ok(Message::Drain(sender)) => {
+                        // Main window has closed: autosave any active editor,
+                        // consume its receipts, then retire this session's GPU.
+                        if let Some(server) = &server {
+                            server.lock().unwrap().stdin.take();
+                        }
+                        drain = Some(sender);
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        // EOF tells the editor to autosave, close and exit.
+                        if let Some(server) = &server {
+                            server.lock().unwrap().stdin.take();
+                        }
+                        return;
+                    }
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
                 let had_active = !active.is_empty();
                 active.retain_mut(|a| {
-                    let status = a.child.try_wait();
-                    a.done = status.as_ref().map_or(true, |s| s.is_some());
+                    let status = a.child.lock().unwrap().try_wait();
+                    a.done = a.request.receipt.with_file_name("closed.txt").is_file()
+                        || status.as_ref().map_or(true, |s| s.is_some());
                     let result = status.map_err(anyhow::Error::from).and_then(|_| {
                         consume_receipts(
                             &a.request,
@@ -434,6 +578,13 @@ fn start(session: Option<Arc<Session>>, busy: Arc<AtomicBool>) -> Worker {
                         Err(errors.join("\n"))
                     };
                     let _ = sender.send(result);
+                    if let Some(server) = server.take() {
+                        let mut child = server.lock().unwrap();
+                        child.stdin.take();
+                        // All editors have committed their receipts. EOF now
+                        // closes the idle native window and its GPU device.
+                        let _ = child.wait();
+                    }
                     return;
                 }
             }
@@ -451,6 +602,10 @@ struct App {
     allow_close: bool,
     close_pending: bool,
     pending_receipts: VecDeque<Updates>,
+    server: Option<mpsc::Receiver<Option<PathBuf>>>,
+    idle: bool,
+    idle_hidden: bool,
+    shutdown: bool,
 }
 impl App {
     fn flush_receipts(&mut self) -> Result<()> {
@@ -482,20 +637,96 @@ fn load(
     receive
 }
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        crate::appearance::sync_native_theme(ctx);
+        let mut resumed = false;
+        if let Some(server) = &self.server {
+            match server.try_recv() {
+                Ok(Some(path)) if self.idle => match Request::read(&path) {
+                    Ok(request) => {
+                        self.request = request;
+                        self.error = None;
+                        self.idle = false;
+                        resumed = true;
+                        self.close_pending = false;
+                        self.load = load(&self.request, ctx, self.preview.clone());
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Title(editor_title(
+                            &self.request,
+                        )));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        log::info!("RAW server reused pid={}", std::process::id());
+                        fastcull::raw_trace::event("server_reused", Vec::new());
+                    }
+                    Err(error) => {
+                        self.error = Some(format!("RAW 请求失败：{error:#}"));
+                    }
+                },
+                Ok(None) | Err(mpsc::TryRecvError::Disconnected) => {
+                    if !self.shutdown {
+                        log::info!("RAW server shutdown pid={}", std::process::id());
+                        fastcull::raw_trace::event("server_shutdown", Vec::new());
+                    }
+                    self.shutdown = true;
+                    self.close_pending = true;
+                }
+                Ok(Some(_)) => {
+                    self.error = Some("RAW 窗口仍在编辑上一张照片".into());
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        // A final editor frame may have queued Close again while autosave was
+        // finishing. Consume that old viewport event before reusing the HWND.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if !self.idle && !resumed {
+                self.close_pending = true;
+            }
+        }
+        if self.idle {
+            if !self.idle_hidden {
+                self.idle_hidden = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            }
+            if self.shutdown {
+                self.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                // Close is an egui viewport command, consumed on the next
+                // pass. A hidden Win32 window needs that pass explicitly too.
+                #[cfg(windows)]
+                {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    if let Ok(handle) = frame.window_handle()
+                        && let RawWindowHandle::Win32(handle) = handle.as_raw()
+                    {
+                        unsafe {
+                            windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                handle.hwnd.get() as _,
+                                windows_sys::Win32::UI::WindowsAndMessaging::WM_PAINT,
+                                0,
+                                0,
+                            );
+                        }
+                    }
+                }
+                #[cfg(not(windows))]
+                let _ = frame;
+            }
+            return;
+        }
         if let Ok(result) = self.load.try_recv() {
             match result {
                 Ok(editor) => self.editor = Some(editor),
                 Err(error) => self.error = Some(error),
             }
         }
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.close_pending = true;
-        }
         if let Some(editor) = &mut self.editor {
             match editor.show(ctx) {
                 crate::raw_editor::Action::Saved(saved) => {
+                    if let Some(revision) = editor.saved_revision() {
+                        fastcull::raw_trace::event("save_receipt_queued", revision.fields());
+                    }
                     self.pending_receipts.push_back(saved.1.clone());
                     match self.flush_receipts() {
                         Ok(()) => self.error = None,
@@ -533,8 +764,31 @@ impl eframe::App for App {
             match result {
                 Ok(true) => match self.flush_receipts() {
                     Ok(()) => {
-                        self.allow_close = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        if self.server.is_some() && !self.shutdown {
+                            // Drop photo textures/workers, retain only device,
+                            // immutable pipelines and small profile metadata.
+                            self.editor = None;
+                            fastcull::local_raw::release_idle_cache();
+                            self.close_pending = false;
+                            match fs::write(
+                                self.request.receipt.with_file_name("closed.txt"),
+                                "closed",
+                            ) {
+                                Ok(()) => {
+                                    self.idle = true;
+                                    self.idle_hidden = false;
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                                    log::info!("RAW server idle pid={}", std::process::id());
+                                    fastcull::raw_trace::event("server_idle", Vec::new());
+                                }
+                                Err(error) => {
+                                    self.error = Some(format!("RAW 关闭回执失败：{error}"))
+                                }
+                            }
+                        } else {
+                            self.allow_close = true;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
                     }
                     Err(error) => {
                         self.close_pending = false;
@@ -552,7 +806,7 @@ impl eframe::App for App {
         }
         if let Some(error) = &self.error {
             egui::Window::new("RAW 编辑提示").show(ctx, |ui| {
-                ui.colored_label(egui::Color32::LIGHT_RED, error);
+                ui.colored_label(ui.visuals().error_fg_color, error);
                 if ui.button("重试保存并关闭").clicked() {
                     if let Some(editor) = &mut self.editor {
                         editor.retry_save();
@@ -569,37 +823,140 @@ impl eframe::App for App {
         }
     }
 }
-pub fn run(path: &Path) -> Result<()> {
-    let request = Request::read(path)?;
-    let title = format!(
+fn editor_title(request: &Request) -> String {
+    format!(
         "FastCull · RAW 编辑 · {}",
         request
             .source
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
+    )
+}
+pub fn run(path: &Path, persistent: bool) -> Result<()> {
+    let request = Request::read(path)?;
+    fastcull::raw_trace::event(
+        "editor_window_open",
+        vec![
+            (
+                "source",
+                fastcull::raw_trace::string(&request.source.to_string_lossy()),
+            ),
+            ("persistent", persistent.to_string()),
+        ],
     );
+    run_window(Some(request), persistent, true)
+}
+/// Start the session editor before a photo is chosen. The hidden window owns
+/// the single session GPU device and display pipelines; the first request is
+/// delivered through the same private stdin pipe as later opens.
+pub fn run_idle() -> Result<()> {
+    fastcull::raw_trace::event("editor_idle_open", Vec::new());
+    run_window(None, true, false)
+}
+fn run_window(request: Option<Request>, persistent: bool, visible: bool) -> Result<()> {
+    let title = request
+        .as_ref()
+        .map(editor_title)
+        .unwrap_or_else(|| "FastCull RAW 编辑".into());
     let options = crate::graphics::native_options(
         egui::ViewportBuilder::default()
             .with_inner_size([1280., 850.])
-            .with_min_inner_size([850., 650.]),
+            .with_min_inner_size([850., 650.])
+            .with_visible(visible),
     );
     eframe::run_native(
         &title,
         options,
         Box::new(move |cc| {
+            fastcull::raw_trace::event("app_created", Vec::new());
             crate::ui::configure(&cc.egui_ctx);
             let preview = crate::graphics::raw_preview(cc);
-            let receiver = load(&request, &cc.egui_ctx, preview.clone());
+            #[cfg(any(windows, target_os = "macos"))]
+            if let Some(preview) = &preview {
+                preview.prewarm();
+            }
+            let server = persistent.then(|| {
+                let (send, receive) = mpsc::channel();
+                let ctx = cc.egui_ctx.clone();
+                // Windows does not issue a paint for request_redraw on a hidden
+                // HWND. Wake our own native event loop without polling idle.
+                #[cfg(windows)]
+                let hwnd = {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    match cc.window_handle().map(|h| h.as_raw()) {
+                        Ok(RawWindowHandle::Win32(handle)) => handle.hwnd.get(),
+                        _ => 0,
+                    }
+                };
+                thread::Builder::new()
+                    .name("raw-server-input".into())
+                    .spawn(move || {
+                        for line in std::io::stdin().lock().lines() {
+                            let Ok(line) = line else {
+                                break;
+                            };
+                            let Ok(path) = decode_path(&line) else {
+                                break;
+                            };
+                            if send.send(Some(path)).is_err() {
+                                return;
+                            }
+                            ctx.request_repaint();
+                            #[cfg(windows)]
+                            if hwnd != 0 {
+                                unsafe {
+                                    windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                        hwnd as _,
+                                        windows_sys::Win32::UI::WindowsAndMessaging::WM_PAINT,
+                                        0,
+                                        0,
+                                    );
+                                }
+                            }
+                        }
+                        let _ = send.send(None);
+                        ctx.request_repaint();
+                        #[cfg(windows)]
+                        if hwnd != 0 {
+                            unsafe {
+                                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                    hwnd as _,
+                                    windows_sys::Win32::UI::WindowsAndMessaging::WM_PAINT,
+                                    0,
+                                    0,
+                                );
+                            }
+                        }
+                    })
+                    .expect("RAW server input");
+                receive
+            });
+            let idle = request.is_none();
+            if idle {
+                // The hidden session editor must never flash on screen while
+                // it waits for its first request.
+                cc.egui_ctx
+                    .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                cc.egui_ctx.request_repaint();
+            }
+            let load = match &request {
+                Some(request) => load(request, &cc.egui_ctx, preview.clone()),
+                None => mpsc::channel().1,
+            };
             Ok(Box::new(App {
-                request,
-                load: receiver,
+                request: request.unwrap_or_else(Request::placeholder),
+                load,
                 editor: None,
                 error: None,
                 preview,
                 allow_close: false,
                 close_pending: false,
                 pending_receipts: VecDeque::new(),
+                server,
+                idle,
+                idle_hidden: false,
+                shutdown: false,
             }))
         }),
     )
@@ -633,6 +990,10 @@ mod tests {
                     ..Default::default()
                 },
             ]),
+            server: None,
+            idle: false,
+            idle_hidden: false,
+            shutdown: false,
         };
         assert!(app.flush_receipts().is_err());
         assert_eq!(app.pending_receipts.len(), 2);
@@ -940,7 +1301,7 @@ mod tests {
         let mut child = command.spawn().unwrap();
         child.wait().unwrap();
         drop(Active {
-            child,
+            child: Arc::new(Mutex::new(child)),
             request: Request {
                 source: parent.path().join("photo.ARW"),
                 receipt: path.join("saved.txt"),

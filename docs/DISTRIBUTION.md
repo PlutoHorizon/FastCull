@@ -49,4 +49,4 @@ Python 的 LR 测试使用 `CARGO_TARGET_DIR`（未设置时为 `target`）下�
 - 用干净 Windows 10/11 x64 用户实际安装，分别测试独立启动、Bridge 脚本授权、LR 加载、Ctrl+Alt+K、同步和卸载；本机隔离目录测试不能替代这一项。
 - 当前安装器未做代码签名。后续正式面向大众发布可增加 Authenticode 签名；签名后重新生成 SHA-256，不能沿用签名前的校验值。
 
-第三方许可证由本地 Cargo 源码缓存和固定哈希的 LibRaw 源码生成。重建原生 DLL 时执行 `scripts/build-native.ps1`；该脚本随二进制发行包提供。
+第三方许可证由本地 Cargo 源码缓存和固定哈希的 LibRaw 源码生成。Windows 原生显影启用有界 OpenMP 并行，发行包和插件目录必须同时携带 `fastcull_raw.dll` 与 `vcomp140.dll`；后者由构建脚本从 Visual Studio x64 Redistributable 复制，不依赖构建机 PATH。重建原生 DLL 时执行 `scripts/build-native.ps1`；该脚本随二进制发行包提供。

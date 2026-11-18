@@ -257,6 +257,43 @@ fn new_render_draft_marks_develop_settings_without_selecting_profile_or_process_
     assert_eq!(draft.matches("crs:HasSettings=").count(), 1);
 }
 
+#[test]
+fn colour_noise_setting_reads_both_xmp_forms_and_preserves_explicit_zero() {
+    for (body, expected) in [
+        (r#"<r:Description c:ColorNoiseReduction="0"/>"#, Some(0)),
+        (
+            r#"<r:Description><c:ColorNoiseReduction>75</c:ColorNoiseReduction></r:Description>"#,
+            Some(75),
+        ),
+        (
+            r#"<r:Description><c:Look c:ColorNoiseReduction="99"/></r:Description>"#,
+            None,
+        ),
+    ] {
+        let packet = format!(r#"<r:RDF xmlns:r="{RDF}" xmlns:c="{CRS}">{body}</r:RDF>"#);
+        assert_eq!(
+            xmp::parse_values(&packet).unwrap().color_noise_reduction,
+            expected
+        );
+        let patched = xmp::patch(
+            &packet,
+            &Updates {
+                rating: Some(4),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            xmp::parse_values(&patched).unwrap().color_noise_reduction,
+            expected
+        );
+    }
+    let invalid = format!(
+        r#"<r:RDF xmlns:r="{RDF}" xmlns:c="{CRS}"><r:Description c:ColorNoiseReduction="101"/></r:RDF>"#
+    );
+    assert!(xmp::parse_values(&invalid).is_err());
+}
+
 fn embedded_dng(path: &Path, packet: &str) {
     // Minimal little-endian TIFF: IFD0 tag 700 (XMP), followed by its UTF-8 packet.
     let mut bytes = b"II\x2a\0\x08\0\0\0".to_vec();

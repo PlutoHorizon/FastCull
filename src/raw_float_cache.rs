@@ -21,6 +21,34 @@ const MAX_CURVE: usize = 65536;
 const MAX_MAP_CELLS: usize = 1_048_576;
 const PIXEL_CHUNK: usize = 8192;
 
+fn valid_pixels(pixels: &[[f32; 4]], width: usize) -> Result<()> {
+    // Disjoint row validation lets large caches use all bounded RAW workers.
+    let valid = |row: &[[f32; 4]]| {
+        row.iter()
+            .flatten()
+            .all(|v| v.is_finite() && v.abs() <= 65504.)
+    };
+    if pixels.len() < 262_144 {
+        ensure!(valid(pixels), "线性缓存像素包含无效浮点数");
+    } else {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, usize::from)
+            .clamp(1, 8);
+        let stripe = pixels.len().div_ceil(width).div_ceil(workers) * width;
+        std::thread::scope(|scope| -> Result<()> {
+            let jobs: Vec<_> = pixels
+                .chunks(stripe)
+                .map(|chunk| scope.spawn(move || valid(chunk)))
+                .collect();
+            for job in jobs {
+                ensure!(job.join().unwrap_or(false), "线性缓存像素包含无效浮点数");
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
 fn pixel_count(size: [usize; 2]) -> Result<usize> {
     let count = size[0].checked_mul(size[1]).context("线性缓存尺寸溢出")?;
     ensure!(
@@ -353,6 +381,9 @@ fn decode_metadata(bytes: &[u8], size: [usize; 2]) -> Result<Frame> {
     );
     Ok(Frame {
         size,
+        pending_hue_sat: None,
+        #[cfg(any(windows, target_os = "macos"))]
+        resident: None,
         pixels: Vec::new(),
         recipe: Recipe {
             look,
@@ -383,7 +414,16 @@ fn decode_metadata(bytes: &[u8], size: [usize; 2]) -> Result<Frame> {
 }
 
 pub fn write(path: &Path, frame: &Frame) -> Result<()> {
+    ensure!(
+        frame.pending_hue_sat.is_none(),
+        "请先完成颜色校正，再写入浮点缓存"
+    );
     let count = pixel_count(frame.size)?;
+    #[cfg(any(windows, target_os = "macos"))]
+    ensure!(
+        frame.resident.is_none(),
+        "GPU 场景必须先导出再写入 CPU 缓存"
+    );
     ensure!(frame.pixels.len() == count, "线性缓存像素数量不符");
     let metadata = encode_metadata(frame)?;
     let parent = path
@@ -402,19 +442,27 @@ pub fn write(path: &Path, frame: &Frame) -> Result<()> {
         output.write_all(&u32::try_from(frame.size[0])?.to_le_bytes())?;
         output.write_all(&u32::try_from(frame.size[1])?.to_le_bytes())?;
         output.write_all(&metadata)?;
-        let mut buffer = Vec::with_capacity(PIXEL_CHUNK * 16);
-        for chunk in frame.pixels.chunks(PIXEL_CHUNK) {
-            buffer.clear();
-            for pixel in chunk {
-                for &v in pixel {
-                    ensure!(
-                        v.is_finite() && v.abs() <= 65504.,
-                        "线性缓存像素超出浮点显示范围"
-                    );
-                    buffer.extend_from_slice(&v.to_le_bytes());
+        valid_pixels(&frame.pixels, frame.size[0])?;
+        #[cfg(all(target_endian = "little", any(windows, target_os = "macos")))]
+        for chunk in frame.pixels.chunks(PIXEL_CHUNK * 8) {
+            output.write_all(bytemuck::cast_slice(chunk))?;
+        }
+        #[cfg(not(all(target_endian = "little", any(windows, target_os = "macos"))))]
+        {
+            let mut buffer = Vec::with_capacity(PIXEL_CHUNK * 16);
+            for chunk in frame.pixels.chunks(PIXEL_CHUNK) {
+                buffer.clear();
+                for pixel in chunk {
+                    for &v in pixel {
+                        ensure!(
+                            v.is_finite() && v.abs() <= 65504.,
+                            "线性缓存像素超出浮点显示范围"
+                        );
+                        buffer.extend_from_slice(&v.to_le_bytes());
+                    }
                 }
+                output.write_all(&buffer)?;
             }
-            output.write_all(&buffer)?;
         }
         output.flush()?;
     }
@@ -458,22 +506,33 @@ pub fn read(path: &Path) -> Result<Frame> {
     input.read_exact(&mut metadata)?;
     let mut frame = decode_metadata(&metadata, size)?;
     frame.pixels.try_reserve_exact(count)?;
-    let mut buffer = vec![0u8; PIXEL_CHUNK * 16];
-    while frame.pixels.len() < count {
-        let chunk = (count - frame.pixels.len()).min(PIXEL_CHUNK);
+    #[cfg(all(target_endian = "little", any(windows, target_os = "macos")))]
+    {
+        frame.pixels.resize(count, [0.; 4]);
         input
-            .read_exact(&mut buffer[..chunk * 16])
+            .read_exact(bytemuck::cast_slice_mut(&mut frame.pixels))
             .context("线性缓存像素截断")?;
-        for pixel in buffer[..chunk * 16].chunks_exact(16) {
-            let mut values = [0.; 4];
-            for (i, v) in values.iter_mut().enumerate() {
-                *v = f32::from_le_bytes(pixel[i * 4..i * 4 + 4].try_into().unwrap());
-                ensure!(
-                    v.is_finite() && v.abs() <= 65504.,
-                    "线性缓存像素包含无效浮点数"
-                );
+        valid_pixels(&frame.pixels, width)?;
+    }
+    #[cfg(not(all(target_endian = "little", any(windows, target_os = "macos"))))]
+    {
+        let mut buffer = vec![0u8; PIXEL_CHUNK * 16];
+        while frame.pixels.len() < count {
+            let chunk = (count - frame.pixels.len()).min(PIXEL_CHUNK);
+            input
+                .read_exact(&mut buffer[..chunk * 16])
+                .context("线性缓存像素截断")?;
+            for pixel in buffer[..chunk * 16].chunks_exact(16) {
+                let mut values = [0.; 4];
+                for (i, v) in values.iter_mut().enumerate() {
+                    *v = f32::from_le_bytes(pixel[i * 4..i * 4 + 4].try_into().unwrap());
+                    ensure!(
+                        v.is_finite() && v.abs() <= 65504.,
+                        "线性缓存像素包含无效浮点数"
+                    );
+                }
+                frame.pixels.push(values);
             }
-            frame.pixels.push(values);
         }
     }
     let mut trailing = [0];
@@ -488,6 +547,9 @@ mod tests {
     fn sample() -> Frame {
         Frame {
             size: [2, 2],
+            pending_hue_sat: None,
+            #[cfg(any(windows, target_os = "macos"))]
+            resident: None,
             pixels: vec![
                 [-0.125, 1.25, 3.5, 1.],
                 [0., 0.1, 0.2, 1.],
@@ -565,6 +627,37 @@ mod tests {
             decoded.recipe.look.as_ref().unwrap().apply([0.2, 0.3, 0.1]),
             frame.recipe.look.as_ref().unwrap().apply([0.2, 0.3, 0.1])
         );
+    }
+    #[test]
+    fn deferred_hue_sat_requires_materialization_and_cancellation_preserves_input() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pending.fcr");
+        let mut frame = sample();
+        let map = HsvMap::new(
+            [1, 2, 1],
+            vec![[0., 1., 1.], [45., 0.7, 1.1]],
+            Encoding::Linear,
+        )
+        .unwrap();
+        let expected: Vec<_> = frame
+            .pixels
+            .iter()
+            .map(|p| {
+                let v = map.apply([p[0], p[1], p[2]]);
+                [v[0], v[1], v[2], p[3]]
+            })
+            .collect();
+        frame.pending_hue_sat = Some(map);
+        let before = frame.pixels.clone();
+        assert!(write(&path, &frame).is_err() && !path.exists());
+        assert!(frame.materialize_hue_sat(&|| true).is_err());
+        assert_eq!(frame.pixels, before);
+        assert!(frame.pending_hue_sat.is_some());
+        frame.materialize_hue_sat(&|| false).unwrap();
+        assert!(frame.pending_hue_sat.is_none());
+        assert_eq!(frame.pixels, expected);
+        write(&path, &frame).unwrap();
+        assert_eq!(read(&path).unwrap().pixels, expected);
     }
     #[test]
     fn truncated_metadata_and_trailing_metadata_are_rejected() {

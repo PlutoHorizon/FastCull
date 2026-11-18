@@ -43,6 +43,7 @@ impl Drop for LinearTexture {
 }
 
 pub struct Preview {
+    prepared_recipe: super::PreparedRecipeTrace,
     gl: Arc<glow::Context>,
     shader: Mutex<Option<Result<(glow::Program, glow::VertexArray), String>>>,
     linear_shader: Mutex<Option<Result<(glow::Program, glow::VertexArray), String>>>,
@@ -53,6 +54,7 @@ pub struct Preview {
 impl Preview {
     pub fn new(gl: Arc<glow::Context>) -> Arc<Self> {
         Arc::new(Self {
+            prepared_recipe: Default::default(),
             gl,
             shader: Mutex::new(None),
             linear_shader: Mutex::new(None),
@@ -136,8 +138,10 @@ void main() {
         rect: egui::Rect,
         texture: egui::TextureId,
         uvs: [egui::Pos2; 4],
-        delta: Settings,
+        delta: impl Into<super::DisplayState>,
     ) {
+        let display = delta.into();
+        let delta = display.settings;
         let preview = self.clone();
         let bounds = [
             2. * (rect.left() - canvas.left()) / canvas.width() - 1.,
@@ -148,6 +152,7 @@ void main() {
         painter.add(egui::PaintCallback {
             rect: canvas,
             callback: Arc::new(egui_glow::CallbackFn::new(move |_, painter| {
+                preview.prepared_recipe.observe(display.provenance);
                 let mut shader = preview.shader.lock().unwrap();
                 if shader.is_none() {
                     *shader = Some(unsafe { preview.compile(false) });
@@ -384,8 +389,10 @@ void main() {
         rect: egui::Rect,
         texture: Arc<LinearTexture>,
         uvs: [egui::Pos2; 4],
-        settings: Settings,
+        settings: impl Into<super::DisplayState>,
     ) {
+        let display = settings.into();
+        let settings = display.settings;
         let preview = self.clone();
         let bounds = [
             2. * (rect.left() - canvas.left()) / canvas.width() - 1.,
@@ -396,6 +403,7 @@ void main() {
         painter.add(egui::PaintCallback {
             rect: canvas,
             callback: Arc::new(egui_glow::CallbackFn::new(move |_, painter| {
+                preview.prepared_recipe.observe(display.provenance);
                 unsafe {
                     preview.collect_garbage();
                 }
@@ -455,6 +463,11 @@ void main() {
                                 .as_ref()
                                 .is_some_and(|m| m.encoding == 1 && m.dims[2] > 1),
                         ),
+                    );
+                    gl.uniform_1_f32(
+                        gl.get_uniform_location(program, "highlight_rolloff")
+                            .as_ref(),
+                        super::highlight_rolloff(settings),
                     );
                     gl.uniform_1_f32(
                         gl.get_uniform_location(program, "gain").as_ref(),

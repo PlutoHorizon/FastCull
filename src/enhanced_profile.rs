@@ -11,6 +11,7 @@ const MAX: usize = 16 * 1024 * 1024;
 const ALPHABET: &[u8] =
     b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?`'|()[]{}@%$#";
 
+#[derive(Clone)]
 pub struct Enhanced {
     pub look: HsvMap,
     pub tone: ToneCurve,
@@ -55,12 +56,16 @@ pub fn read() -> Result<Enhanced> {
     let path = paths().into_iter().find(|p| p.is_file()).context(
         "未找到已安装的 Adobe Color.xmp；请安装 Adobe Camera Raw 或设置 FASTCULL_PROFILE_DIR",
     )?;
-    let mut text = String::new();
-    fs::File::open(path)?
-        .take((MAX + 1) as u64)
-        .read_to_string(&mut text)?;
-    ensure!(text.len() <= MAX, "增强配置文件过大");
-    parse(&text)
+    static CACHE: crate::raw_profile_cache::Cache<Enhanced> =
+        crate::raw_profile_cache::Cache::new();
+    CACHE.read(&path, || {
+        let mut text = String::new();
+        fs::File::open(&path)?
+            .take((MAX + 1) as u64)
+            .read_to_string(&mut text)?;
+        ensure!(text.len() <= MAX, "增强配置文件过大");
+        parse(&text)
+    })
 }
 pub fn available() -> bool {
     paths().into_iter().any(|p| p.is_file())

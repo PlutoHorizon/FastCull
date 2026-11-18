@@ -154,6 +154,8 @@ pub struct Values {
     pub exposure: Option<i32>,
     pub white_balance: Option<WhiteBalanceSettings>,
     pub basic: BasicAdjustments,
+    /// Read-only local colour noise reduction; an explicit zero disables it.
+    pub color_noise_reduction: Option<u32>,
     /// Base camera profile; an enhanced Look can supply the effective profile.
     pub camera_profile: Option<String>,
     pub look_name: Option<String>,
@@ -163,7 +165,7 @@ pub struct Values {
     pub flag: Option<String>,
     pub orientation: Option<u16>,
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Updates {
     pub camera_profile: Option<String>,
     pub crop: Option<crate::crop::Crop>,
@@ -388,6 +390,7 @@ fn field(name: &str, ns: &HashMap<String, String>, attribute: bool) -> Option<&'
         (CRS, "Blacks2012") => Some("crs:Blacks2012"),
         (CRS, "Vibrance") => Some("crs:Vibrance"),
         (CRS, "Saturation") => Some("crs:Saturation"),
+        (CRS, "ColorNoiseReduction") => Some("crs:ColorNoiseReduction"),
         (CRS, "WhiteBalance") => Some("crs:WhiteBalance"),
         (CRS, "Temperature") => Some("crs:Temperature"),
         (CRS, "Tint") => Some("crs:Tint"),
@@ -678,6 +681,15 @@ pub fn parse_values(text: &str) -> Result<Values> {
         process_version: strict("crs:ProcessVersion")?,
         exposure,
         basic,
+        color_noise_reduction: strict("crs:ColorNoiseReduction")?
+            .map(|v| -> Result<u32> {
+                let v = v
+                    .parse::<u32>()
+                    .context("invalid crs:ColorNoiseReduction")?;
+                ensure!(v <= 100, "crs:ColorNoiseReduction outside 0..100");
+                Ok(v)
+            })
+            .transpose()?,
         rating: get("xmp:Rating")?
             .and_then(|v| v.parse::<u8>().ok())
             .filter(|v| *v <= 5),

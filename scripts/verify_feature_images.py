@@ -10,7 +10,7 @@ def verify(directory):
     # Infer the current theme's canvas color from the right fit-view margin.
     # Hard-coding the former (30,30,30) also sampled the unchanged sidebar.
     background=before.getpixel((w-2,int(h*.4)))
-    assert max(background)<64,'Cannot locate the dark photo canvas margin'
+    assert max(background)-min(background)<32 and (max(background)<90 or min(background)>160), 'Cannot locate the neutral photo canvas margin'
     canvas_top=next((y for y in range(int(h*.1),int(h*.5))
         if all(before.getpixel((w-2,y+d))==background for d in range(3))),int(h*.1))
     # Stay inside the photo canvas even when the toolbar wraps at 640x480.

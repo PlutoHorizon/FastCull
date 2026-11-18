@@ -7,7 +7,48 @@ use fastcull::{dcp::Encoding, local_raw, xmp};
 use std::{fs, path::PathBuf};
 
 fn main() -> Result<()> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|v| v == "--gpu") {
+        args.remove(0);
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            let backends = if cfg!(windows) {
+                wgpu::Backends::DX12
+            } else {
+                wgpu::Backends::METAL
+            };
+            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                backends,
+                ..Default::default()
+            });
+            let adapter = instance
+                .enumerate_adapters(backends)
+                .into_iter()
+                .min_by_key(|a| u8::from(a.get_info().vendor != 0x10de))
+                .context("native GPU")?;
+            println!("GPU {:?}", adapter.get_info());
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+            fastcull::raw_compute::install(device, queue);
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        anyhow::bail!("native GPU probe requires Windows or macOS");
+    }
+    if args.len() == 2 && args[0] == "--inventory" {
+        let path = PathBuf::from(&args[1]);
+        let started = std::time::Instant::now();
+        let info = fastcull::arw::ArwInfo::read(&path)?;
+        let metadata = started.elapsed();
+        let choices =
+            fastcull::raw_profiles::choices(&path, info.capture.camera.as_deref().unwrap_or(""));
+        println!(
+            "metadata_ms={:.2} inventory_ms={:.2} choices={}",
+            metadata.as_secs_f64() * 1000.,
+            (started.elapsed() - metadata).as_secs_f64() * 1000.,
+            choices.len()
+        );
+        return Ok(());
+    }
     if args.len() == 4 && args[0] == "--profile-xmp" {
         let packet = fs::read_to_string(&args[1])?;
         let name = args[2].to_str().context("profile must be UTF-8")?;
@@ -38,8 +79,11 @@ fn main() -> Result<()> {
         xmp: packet,
         max_edge: edge,
     })?;
-    let frame = rendered.frame;
+    let mut frame = rendered.frame;
+    frame.materialize_hue_sat(&|| false)?;
+    println!("TIMINGS {:?}", rendered.timings);
     let recipe = raw_preview::Recipe {
+        hue_sat: frame.pending_hue_sat,
         extra_look: frame
             .recipe
             .extra_look

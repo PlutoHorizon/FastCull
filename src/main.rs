@@ -1,4 +1,5 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
+mod appearance;
 mod bridge_list;
 mod cache;
 mod crop_ui;
@@ -21,6 +22,7 @@ mod raw_preview;
 mod raw_sample;
 mod raw_view;
 mod raw_window;
+mod settings;
 mod ui;
 use anyhow::{Context, Result, ensure};
 use fastcull::{arw::ArwInfo, handoff, imaging, state, xmp};
@@ -84,6 +86,7 @@ fn files(args: &[std::ffi::OsString]) -> Result<Vec<PathBuf>> {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let mode = args.first().and_then(|s| s.to_str()).unwrap_or("");
+    fastcull::raw_trace::install(if mode.is_empty() { "ui" } else { mode });
     if args.is_empty() {
         return ui::run_standalone(Vec::new());
     }
@@ -95,9 +98,13 @@ fn run() -> Result<()> {
         return Ok(());
     }
     match mode {
-        "--raw-editor" => {
+        "--raw-editor" | "--raw-editor-server" => {
             ensure!(args.len() == 2, "expected RAW window request");
-            raw_window::run(Path::new(&args[1]))?;
+            raw_window::run(Path::new(&args[1]), mode == "--raw-editor-server")?;
+        }
+        "--raw-editor-idle" => {
+            ensure!(args.len() == 1, "expected no RAW window request");
+            raw_window::run_idle()?;
         }
         "--bridge-open" | "--bridge-list-owned" => {
             ensure!(args.len() == 2, "expected Bridge photo list");

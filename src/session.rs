@@ -57,6 +57,7 @@ impl Session {
             crop: u.crop,
             exposure: u.exposure,
             basic: u.basic,
+            color_noise_reduction: None,
             white_balance: u.white_balance.map(Into::into),
             camera_profile: None,
             look_name: None,

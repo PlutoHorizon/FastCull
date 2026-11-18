@@ -127,6 +127,7 @@ fn trim_previews(directory: &Path, keep: &Path) {
 #[derive(Clone)]
 struct PreviewJob {
     generation: u64,
+    ticket: fastcull::raw_recipe::SceneTicket,
     source: PathBuf,
     source_stamp: Stamp,
     identity_source: PathBuf,
@@ -136,12 +137,23 @@ struct PreviewJob {
     nonce: u64,
 }
 struct SaveJob {
+    revision: fastcull::raw_recipe::Revision,
     source: PathBuf,
     source_stamp: Stamp,
     expected: Option<String>,
     base: String,
     prepared_source: PathBuf,
     updates: Updates,
+}
+#[derive(PartialEq)]
+struct RecipeDraft {
+    base: String,
+    render_source: PathBuf,
+    nonce: u64,
+    updates: Updates,
+    light: bool,
+    color: bool,
+    crop: bool,
 }
 struct PrepareJob {
     source: PathBuf,
@@ -150,11 +162,13 @@ struct PrepareJob {
 }
 enum Job {
     Quick(PathBuf),
+    Profiles(PathBuf, String),
     Preview(PreviewJob),
     Save(SaveJob),
     Prepare(PrepareJob),
 }
 enum Event {
+    QuickFailed,
     Profiles(Vec<fastcull::raw_profiles::Choice>),
     Dimensions {
         size: Vec2,
@@ -168,11 +182,13 @@ enum Event {
     },
     Scene {
         generation: u64,
+        ticket: fastcull::raw_recipe::SceneTicket,
         image: Result<Box<fastcull::raw_color::Frame>, String>,
         ms: f64,
         cached: bool,
     },
     Saved {
+        revision: fastcull::raw_recipe::Revision,
         result: Result<(Values, Updates), String>,
         packet: Option<String>,
         source_stamp: Option<Stamp>,
@@ -403,6 +419,7 @@ fn preserve_resources(prepared: &Path, source: &Path) -> Result<()> {
     Ok(())
 }
 struct Worker {
+    thread: Option<thread::JoinHandle<()>>,
     queue: Arc<(Mutex<VecDeque<Job>>, Condvar)>,
     stop: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
@@ -415,7 +432,7 @@ impl Worker {
         let generation = Arc::new(AtomicU64::new(0));
         let (send, receive) = mpsc::channel();
         let (q, s, g) = (queue.clone(), stop.clone(), generation.clone());
-        thread::Builder::new()
+        let thread = thread::Builder::new()
             .name("local-raw-editor".into())
             .spawn(move || {
                 loop {
@@ -435,16 +452,18 @@ impl Worker {
                             let quick_started = Instant::now();
                             let quick = (|| -> Result<_> {
                                 let info = fastcull::arw::ArwInfo::read(&path)?;
-                                let _ =
-                                    send.send(Event::Profiles(fastcull::raw_profiles::choices(
-                                        &path,
-                                        info.capture.camera.as_deref().unwrap_or(""),
-                                    )));
+                                // Publish the embedded image before opening/parsing
+                                // installed profiles, even on a cold profile disk.
+                                q.0.lock().unwrap().push_back(Job::Profiles(
+                                    path.clone(),
+                                    info.capture.camera.clone().unwrap_or_default(),
+                                ));
                                 if let Some((w, h)) = info.image_size.or(info.raw_size) {
                                     let _ = send.send(Event::Dimensions {
                                         size: Vec2::new(w as f32, h as f32),
                                         orientation: info.orientation,
                                     });
+                                    ctx.request_repaint();
                                 }
                                 let pixels = fastcull::imaging::decode_level(
                                     &path,
@@ -476,8 +495,20 @@ impl Worker {
                                     size,
                                     orientation,
                                 },
-                                Err(_) => continue,
+                                Err(_) => Event::QuickFailed,
                             }
+                        }
+                        Job::Profiles(path, model) => {
+                            if g.load(Ordering::Relaxed) == 0 {
+                                let mut jobs = q.0.lock().unwrap();
+                                jobs.push_back(Job::Profiles(path, model));
+                                if g.load(Ordering::Relaxed) == 0 {
+                                    let _ =
+                                        q.1.wait_timeout(jobs, Duration::from_millis(50)).unwrap();
+                                }
+                                continue;
+                            }
+                            Event::Profiles(fastcull::raw_profiles::choices(&path, &model))
                         }
                         Job::Prepare(job) => {
                             Event::Prepared(prepare_catalog(&job, &s).map_err(|e| format!("{e:#}")))
@@ -526,8 +557,16 @@ impl Worker {
                                             max_edge: job.edge,
                                         })?;
                                     // Cache is optional; a full disk must not hide an otherwise valid RAW frame.
-                                    if let Err(error) =
-                                        fastcull::raw_float_cache::write(&output, &rendered.frame)
+                                    // Interactive full-size WB/profile edits would
+                                    // otherwise synchronously flush hundreds of MB
+                                    // for every unique slider position. The live GPU
+                                    // texture and camera-RGB cache retain full detail;
+                                    // persist only the reusable fit preview.
+                                    if job.edge != 0
+                                        && let Err(error) = fastcull::raw_float_cache::write(
+                                            &output,
+                                            &rendered.frame,
+                                        )
                                     {
                                         log::warn!("linear preview cache: {error:#}");
                                     }
@@ -546,6 +585,7 @@ impl Worker {
                             }
                             Event::Scene {
                                 generation: job.generation,
+                                ticket: job.ticket,
                                 image: result,
                                 ms: started.elapsed().as_secs_f64() * 1000.,
                                 cached,
@@ -583,6 +623,7 @@ impl Worker {
                                 .as_ref()
                                 .and_then(|_| stamp(&job.source).ok());
                             Event::Saved {
+                                revision: job.revision,
                                 result,
                                 packet: committed_packet,
                                 source_stamp,
@@ -597,6 +638,7 @@ impl Worker {
             })
             .expect("spawn local RAW editor");
         Self {
+            thread: Some(thread),
             queue,
             stop,
             generation,
@@ -609,7 +651,11 @@ impl Worker {
         let generation = job.generation;
         let mut q = self.queue.0.lock().unwrap();
         q.retain(|j| !matches!(j, Job::Preview(_)));
-        q.push_back(Job::Preview(job));
+        let at = q
+            .iter()
+            .position(|j| matches!(j, Job::Profiles(..)))
+            .unwrap_or(q.len());
+        q.insert(at, Job::Preview(job));
         self.queue.1.notify_one();
         generation
     }
@@ -619,12 +665,27 @@ impl Worker {
         q.push_front(Job::Save(job));
         self.queue.1.notify_one();
     }
+    fn cancel_preview(&self) -> u64 {
+        local_raw::cancel_pending();
+        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
+        self.queue
+            .0
+            .lock()
+            .unwrap()
+            .retain(|j| !matches!(j, Job::Preview(_)));
+        generation
+    }
 }
 impl Drop for Worker {
     fn drop(&mut self) {
+        let queue = self.queue.0.lock().unwrap();
         self.stop.store(true, Ordering::Relaxed);
         local_raw::cancel_pending();
         self.queue.1.notify_one();
+        drop(queue);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -634,6 +695,11 @@ enum Balance {
     AsShot,
     Custom,
 }
+fn exposure_limits(packet: &str) -> std::result::Result<(i32, i32), String> {
+    xmp::exposure_range(packet)
+        .map(|range| (*range.start(), *range.end()))
+        .map_err(|error| format!("{error:#}"))
+}
 pub enum Action {
     None,
     Cancel,
@@ -641,6 +707,12 @@ pub enum Action {
     Saved(Box<(Values, Updates)>),
 }
 pub struct Editor {
+    recipe_clock: fastcull::raw_recipe::Clock,
+    recipe_source: String,
+    frame_ticket: Option<(fastcull::raw_recipe::SceneTicket, u64, u64)>,
+    last_saved_revision: Option<fastcull::raw_recipe::Revision>,
+    last_frame_provenance: Option<fastcull::raw_recipe::FrameProvenance>,
+    last_recipe_draft: Option<RecipeDraft>,
     focus_overlay: crate::focus_overlay::Overlay,
     pub path: PathBuf,
     original: Values,
@@ -663,10 +735,12 @@ pub struct Editor {
     enable_light: bool,
     enable_color: bool,
     basic_ranges: [Option<(i32, i32)>; 7],
+    exposure_limits: std::result::Result<(i32, i32), String>,
     sample: Option<crate::raw_sample::SampleMap>,
     histogram: Option<crate::raw_histogram::Histogram>,
     picking: bool,
     effective_wb: Option<WhiteBalance>,
+    rendered_wb: Option<(f64, f64)>,
     balance: Balance,
     temperature: String,
     tint: String,
@@ -687,12 +761,18 @@ pub struct Editor {
     saving: bool,
     save_error: Option<String>,
     full: bool,
+    initial_pending: bool,
+    initial_full_fallback: bool,
+    prefetch_at: Option<Instant>,
+    prefetching: bool,
     view: crate::raw_view::View,
     nonce: u64,
     preview: Option<Arc<crate::raw_preview::Preview>>,
     rendered_exposure: f64,
     smoke_step: u8,
     smoke_at: Instant,
+    drag_index: u8,
+    last_display: Option<crate::raw_preview::Settings>,
     confirmed: bool,
 }
 impl Editor {
@@ -713,7 +793,15 @@ impl Editor {
     ) -> Result<Self> {
         ensure!(supported(&path), "RAW 编辑第一版支持 ARW、NEF 和 DNG");
         let path = std::path::absolute(path)?;
+        let init_started = Instant::now();
         let original = xmp::read(&path)?;
+        fastcull::raw_trace::event(
+            "editor_xmp_read",
+            vec![(
+                "ms",
+                format!("{:.3}", init_started.elapsed().as_secs_f64() * 1000.),
+            )],
+        );
         let temperature = original
             .white_balance
             .as_ref()
@@ -733,10 +821,18 @@ impl Editor {
             && fastcull::enhanced_profile::available()
             && !fastcull::enhanced_profile::packet_has_payload(packet.as_deref().unwrap_or(""))
                 .unwrap_or(false);
+        let source_stamp = stamp(&path)?;
+        let recipe_source = format!("{}|{:?}|{nonce}", path.display(), source_stamp);
         let mut editor = Self {
+            recipe_clock: fastcull::raw_recipe::Clock::new(fastcull::raw_trace::unix_us()),
+            recipe_source,
+            frame_ticket: None,
+            last_saved_revision: None,
+            last_frame_provenance: None,
+            last_recipe_draft: None,
             focus_overlay: Default::default(),
             packet: packet.clone(),
-            source_stamp: stamp(&path)?,
+            source_stamp,
             path,
             render_source: PathBuf::new(),
             render_packet: packet.clone().unwrap_or_else(xmp::template),
@@ -751,10 +847,12 @@ impl Editor {
                     .ok()
                     .map(|r| (*r.start(), *r.end()))
             }),
+            exposure_limits: exposure_limits(packet.as_deref().unwrap_or(&xmp::template())),
             sample: None,
             histogram: None,
             picking: false,
             effective_wb: original.white_balance.as_ref().and_then(|w| w.edit()),
+            rendered_wb: None,
             source_orientation: original.orientation,
             draft_crop: original.crop.unwrap_or_default(),
             draft_orientation: original.orientation.unwrap_or(1),
@@ -781,18 +879,52 @@ impl Editor {
             error: None,
             status: "正在加载本地 RAW 显影…".into(),
             rendered_exposure: initial_exposure,
-            rendering: false,
+            rendering: preview.is_some(),
             saving: false,
             save_error: None,
             full: false,
+            initial_pending: preview.is_some(),
+            initial_full_fallback: false,
+            prefetch_at: None,
+            prefetching: false,
             view: Default::default(),
             nonce,
             preview,
             smoke_step: 0,
             smoke_at: Instant::now(),
+            drag_index: 0,
+            last_display: None,
             confirmed: false,
         };
         editor.render_source = editor.path.clone();
+        let mut recipe = DefaultHasher::new();
+        editor.render_packet.hash(&mut recipe);
+        editor.packet.hash(&mut recipe);
+        fastcull::raw_trace::event(
+            "editor_init",
+            vec![
+                ("nonce", editor.nonce.to_string()),
+                ("recipe", recipe.finish().to_string()),
+                (
+                    "packet_bytes",
+                    editor
+                        .render_packet
+                        .len()
+                        .saturating_add(editor.packet.as_ref().map_or(0, String::len))
+                        .to_string(),
+                ),
+                ("initial_pending", editor.initial_pending.to_string()),
+                ("preparing", editor.preparing.to_string()),
+                (
+                    "exposure_uev",
+                    (editor.exposure * 1_000_000.).round().to_string(),
+                ),
+                (
+                    "init_ms",
+                    format!("{:.3}", init_started.elapsed().as_secs_f64() * 1000.),
+                ),
+            ],
+        );
         editor
             .worker
             .queue
@@ -815,7 +947,7 @@ impl Editor {
                 }));
             editor.worker.queue.1.notify_one();
             editor.status = "正在读取 Lightroom 目录显影设置…".into();
-        } else {
+        } else if !editor.initial_pending {
             editor.render()?;
         }
         Ok(editor)
@@ -882,6 +1014,14 @@ impl Editor {
     /// Capture an unfinished crop when closing the editor; saving waits for this
     /// final state and keeps the window open if the atomic write fails.
     pub fn auto_save(&mut self) -> Result<bool> {
+        if self.prefetching {
+            self.generation = self.worker.cancel_preview();
+            self.prefetching = false;
+            self.prefetch_at = None;
+            self.full = false;
+            self.rendering = false;
+            self.confirmed = self.texture.is_some();
+        }
         if self.saving || self.preparing {
             return Ok(false);
         }
@@ -899,7 +1039,9 @@ impl Editor {
         if updates.empty() {
             return Ok(true);
         }
+        let revision = self.refresh_recipe()?;
         self.worker.save(SaveJob {
+            revision,
             source: self.path.clone(),
             source_stamp: self.source_stamp.clone(),
             expected: self.packet.clone(),
@@ -948,7 +1090,8 @@ impl Editor {
     fn crop_canvas(&mut self, ui: &mut egui::Ui) {
         let (area, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        ui.painter().rect_filled(area, 0., Color32::from_gray(18));
+        ui.painter()
+            .rect_filled(area, 0., crate::appearance::palette(ui.ctx()).canvas);
         if !self.crop_ready {
             ui.painter().text(
                 area.center(),
@@ -959,7 +1102,12 @@ impl Editor {
             );
             return;
         }
-        let settings = self.preview_settings();
+        let provenance = self.display_provenance();
+        self.last_frame_provenance = Some(provenance);
+        let settings = crate::raw_preview::DisplayState {
+            settings: self.preview_settings(),
+            provenance: Some(provenance),
+        };
         if let (Some(editor), Some(texture)) = (&mut self.crop_editor, &self.texture) {
             let display = editor.display();
             let (s, c) = editor.geometry.angle.to_radians().sin_cos();
@@ -988,22 +1136,107 @@ impl Editor {
             editor.overlay(ui, &response, rect);
         }
     }
-    fn render(&mut self) -> Result<()> {
+    fn scene_packet(&self) -> Result<String> {
         let mut updates = self.updates()?;
         updates.basic = BasicAdjustments::default();
         updates.rating = None;
         if self.crop_editor.is_some() {
             updates.crop = Some(Default::default());
             updates.orientation = Some(1);
+        }
+        if updates.empty() {
+            Ok(self.render_packet.clone())
+        } else {
+            xmp::patch(&self.render_packet, &updates)
+        }
+    }
+    fn refresh_recipe(&mut self) -> Result<fastcull::raw_recipe::Revision> {
+        let updates = self.updates()?;
+        if self.last_recipe_draft.as_ref().is_some_and(|draft| {
+            draft.base == self.render_packet
+                && draft.render_source == self.render_source
+                && draft.nonce == self.nonce
+                && draft.updates == updates
+                && draft.light == self.enable_light
+                && draft.color == self.enable_color
+                && draft.crop == self.crop_editor.is_some()
+        }) {
+            return Ok(self.recipe_clock.revision());
+        }
+        let desired = xmp::patch(&self.render_packet, &updates)?;
+        let scene = fastcull::raw_recipe::scene_packet(&self.scene_packet()?)?;
+        let revision = self.recipe_clock.update(fastcull::raw_recipe::Snapshot {
+            source: format!(
+                "{:?}|{:?}|{}",
+                self.recipe_source, self.render_source, self.nonce
+            ),
+            scene_packet: scene,
+            packet: desired,
+            light_enabled: self.enable_light,
+            color_enabled: self.enable_color,
+        });
+        self.last_recipe_draft = Some(RecipeDraft {
+            base: self.render_packet.clone(),
+            render_source: self.render_source.clone(),
+            nonce: self.nonce,
+            updates,
+            light: self.enable_light,
+            color: self.enable_color,
+            crop: self.crop_editor.is_some(),
+        });
+        if let Some(directory) = self.smoke_directory() {
+            let _ = fs::create_dir_all(&directory);
+            if let Some(snapshot) = self.recipe_clock.record() {
+                let _ = fs::write(
+                    directory.join(format!(
+                        "recipe-{}-{}.txt",
+                        revision.session, revision.sequence
+                    )),
+                    snapshot.serialize(),
+                );
+            }
+        }
+        Ok(revision)
+    }
+    fn display_provenance(&mut self) -> fastcull::raw_recipe::FrameProvenance {
+        let invalid = self.refresh_recipe().is_err();
+        let current = self.recipe_clock.revision();
+        let mut value = if let Some((ticket, generation, profile)) = &self.frame_ticket {
+            self.recipe_clock
+                .frame(ticket, *generation, *profile)
+                .unwrap_or(fastcull::raw_recipe::FrameProvenance {
+                    requested: ticket.requested,
+                    displayed: current,
+                    generation: *generation,
+                    profile_fingerprint: *profile,
+                    provisional: true,
+                })
+        } else {
+            fastcull::raw_recipe::FrameProvenance {
+                displayed: current,
+                provisional: true,
+                ..Default::default()
+            }
+        };
+        value.provisional |= invalid || self.preview_settings().wb != [1.; 3];
+        value
+    }
+    fn render(&mut self) -> Result<()> {
+        self.initial_pending = false;
+        self.initial_full_fallback = false;
+        self.prefetch_at = None;
+        self.prefetching = false;
+        if self.crop_editor.is_some() {
             self.crop_ready = false;
         }
-        let packet = if updates.empty() {
-            self.render_packet.clone()
-        } else {
-            xmp::patch(&self.render_packet, &updates)?
-        };
+        let packet = self.scene_packet()?;
+        self.refresh_recipe()?;
+        let mut recipe = DefaultHasher::new();
+        packet.hash(&mut recipe);
+        let recipe = recipe.finish();
         self.generation = self.worker.preview(PreviewJob {
             generation: 0,
+            ticket: self.recipe_clock.ticket(),
             source: self.render_source.clone(),
             source_stamp: stamp(&self.render_source)?,
             identity_source: self.path.clone(),
@@ -1017,6 +1250,28 @@ impl Editor {
         self.changed_at = None;
         self.error = None;
         self.status = "本地 RAW 显影中…".into();
+        let mut fields = self.recipe_clock.revision().fields();
+        fields.extend([
+            ("generation", self.generation.to_string()),
+            ("full", self.full.to_string()),
+            ("edge", if self.full { 0 } else { 1600 }.to_string()),
+            ("nonce", self.nonce.to_string()),
+            ("recipe", recipe.to_string()),
+            (
+                "exposure_uev",
+                (self.exposure * 1_000_000.).round().to_string(),
+            ),
+        ]);
+        fastcull::raw_trace::event("render_requested", fields);
+        Ok(())
+    }
+    fn start_initial(&mut self) -> Result<()> {
+        if !self.initial_pending || self.preparing {
+            return Ok(());
+        }
+        self.full = initial_full_eligible(self.source_size, self.preview.is_some());
+        self.render()?;
+        self.initial_full_fallback = self.full;
         Ok(())
     }
     fn preview_settings(&self) -> crate::raw_preview::Settings {
@@ -1045,21 +1300,50 @@ impl Editor {
                 (exposure - self.rendered_exposure) as f32
             },
             basic,
-            wb: [1.; 3],
+            wb: if self.linear_texture.is_some() {
+                let desired = match self.balance {
+                    Balance::Custom => self
+                        .temperature
+                        .parse::<f64>()
+                        .ok()
+                        .zip(self.tint.parse::<f64>().ok()),
+                    Balance::Original => self.original.white_balance.as_ref().and_then(|w| {
+                        (w.mode.as_deref() != Some("As Shot"))
+                            .then_some(w)
+                            .and_then(|w| {
+                                w.temperature
+                                    .map(|t| (f64::from(t), f64::from(w.tint.unwrap_or(0))))
+                            })
+                    }),
+                    Balance::AsShot => None,
+                };
+                crate::raw_preview::white_balance_preview(self.rendered_wb, desired)
+            } else {
+                [1.; 3]
+            },
         }
     }
     pub fn show(&mut self, ctx: &egui::Context) -> Action {
+        let _ = self.refresh_recipe();
         self.focus_overlay.shortcut(ctx);
         let mut action = Action::None;
         let mut crop_action = crate::crop_ui::Action::None;
         while let Ok(event) = self.worker.receive.try_recv() {
             match event {
+                Event::QuickFailed => {
+                    if let Err(e) = self.start_initial() {
+                        self.error = Some(format!("{e:#}"));
+                    }
+                }
                 Event::Profiles(profiles) => self.profile_choices = profiles,
                 Event::Dimensions { size, orientation } => {
                     self.source_size = Some(size);
                     if self.original.orientation.is_none() {
                         self.draft_orientation = orientation;
                         self.base_orientation = orientation;
+                    }
+                    if let Err(e) = self.start_initial() {
+                        self.error = Some(format!("{e:#}"));
                     }
                 }
                 Event::Quick {
@@ -1073,11 +1357,18 @@ impl Editor {
                         self.draft_orientation = orientation;
                         self.base_orientation = orientation;
                     }
-                    if let Some(dir) = std::env::var_os("FASTCULL_RAW_EDIT_SMOKE_DIR") {
+                    if let Some(dir) = self.smoke_directory() {
                         let _ = fs::create_dir_all(&dir);
-                        let _ =
-                            fs::write(PathBuf::from(dir).join("quick-ms.txt"), format!("{ms:.3}"));
+                        let _ = fs::write(dir.join("quick-ms.txt"), format!("{ms:.3}"));
                     }
+                    fastcull::raw_trace::event(
+                        "quick_ready",
+                        vec![
+                            ("ms", format!("{ms:.3}")),
+                            ("width", size.x.to_string()),
+                            ("height", size.y.to_string()),
+                        ],
+                    );
                     if self.texture.is_none() {
                         self.sample = crate::raw_sample::SampleMap::from_image(&image).ok();
                         self.histogram = Some(crate::raw_histogram::Histogram::from_image(&image));
@@ -1088,6 +1379,9 @@ impl Editor {
                         ));
                         self.rendered_exposure = 0.;
                         self.status = "快速原片预览 · 正在后台显影".into();
+                    }
+                    if let Err(e) = self.start_initial() {
+                        self.error = Some(format!("{e:#}"));
                     }
                 }
                 Event::Prepared(result) => {
@@ -1130,6 +1424,7 @@ impl Editor {
                             self.nonce = identity.finish();
                             self.render_source = source;
                             self.render_packet = packet.clone();
+                            self.exposure_limits = exposure_limits(&packet);
                             self.basic = values.basic;
                             self.basic_ranges = BasicControl::ALL.map(|c| {
                                 xmp::basic_range(&packet, c)
@@ -1165,7 +1460,12 @@ impl Editor {
                                 .and_then(|v| v.tint)
                                 .map(|v| v.to_string())
                                 .unwrap_or_default();
-                            if let Err(e) = self.render() {
+                            let result = if self.initial_pending {
+                                self.start_initial()
+                            } else {
+                                self.render()
+                            };
+                            if let Err(e) = result {
                                 self.error = Some(format!("{e:#}"));
                             }
                         }
@@ -1177,18 +1477,32 @@ impl Editor {
                 }
                 Event::Scene {
                     generation,
+                    ticket,
                     image,
                     ms,
                     cached,
-                } if generation == self.generation => {
+                } if generation == self.generation && self.recipe_clock.accepts(&ticket) => {
                     self.rendering = false;
                     match image {
                         Ok(frame) => {
                             let frame = *frame;
+                            self.frame_ticket =
+                                Some((ticket, generation, frame.profile_fingerprint));
+                            #[cfg(any(windows, target_os = "macos"))]
+                            let resident = frame.resident.is_some();
+                            #[cfg(not(any(windows, target_os = "macos")))]
+                            let resident = false;
+                            let pending_hue_sat = frame.pending_hue_sat.is_some();
+                            if self.smoke_step == 0
+                                && std::env::var_os("FASTCULL_RAW_FIRST_100_SMOKE").is_some()
+                            {
+                                self.view.hundred_percent();
+                            }
                             self.crop_ready = self.crop_editor.is_some();
                             self.profile_status = frame.profile;
                             self.color_warning = frame.warning;
                             self.grey_sampler = Some(frame.grey);
+                            self.rendered_wb = frame.temperature.zip(frame.tint);
                             if let (Some(t), Some(tint)) = (frame.temperature, frame.tint) {
                                 let wb = WhiteBalance::Custom {
                                     temperature: t.round() as u32,
@@ -1203,9 +1517,12 @@ impl Editor {
                                 }
                             }
                             let image = crate::raw_preview::LinearImage {
+                                #[cfg(any(windows, target_os = "macos"))]
+                                resident: frame.resident,
                                 size: frame.size,
                                 pixels: frame.pixels,
                                 recipe: crate::raw_preview::Recipe {
+                                    hue_sat: frame.pending_hue_sat,
                                     extra_look: frame.recipe.extra_look.map(|v| {
                                         crate::raw_preview::HsvLookup {
                                             dims: v.dims,
@@ -1282,15 +1599,27 @@ impl Editor {
                             }
                             self.rendered_exposure = 0.;
                             self.confirmed = true;
+                            let preloaded = self.prefetching || self.initial_full_fallback;
+                            self.initial_full_fallback = false;
+                            self.prefetching = false;
+                            self.prefetch_at = (!self.full
+                                && self.crop_editor.is_none()
+                                && self.source_size.is_some_and(|s| {
+                                    s.max_elem() > 1600. && s.x * s.y <= 60_000_000.
+                                }))
+                            .then(Instant::now);
                             self.error = None;
-                            self.status = format!(
-                                "浮点显影 · {} · {:.0} ms",
-                                if cached { "缓存" } else { "配置文件" },
-                                ms
-                            );
-                            if let Some(dir) = std::env::var_os("FASTCULL_RAW_EDIT_SMOKE_DIR") {
+                            self.status = if preloaded {
+                                "100% 已就绪".into()
+                            } else {
+                                format!(
+                                    "浮点显影 · {} · {:.0} ms",
+                                    if cached { "缓存" } else { "配置文件" },
+                                    ms
+                                )
+                            };
+                            if let Some(dir) = self.smoke_directory() {
                                 use std::io::Write;
-                                let dir = PathBuf::from(dir);
                                 let _ = fs::create_dir_all(&dir);
                                 if let Ok(mut file) = fs::OpenOptions::new()
                                     .create(true)
@@ -1304,11 +1633,54 @@ impl Editor {
                                     );
                                 }
                             }
+                            let mut fields = vec![
+                                ("generation", generation.to_string()),
+                                ("ms", format!("{ms:.3}")),
+                                ("cached", cached.to_string()),
+                                ("full", self.full.to_string()),
+                                ("width", dimensions[0].to_string()),
+                                ("height", dimensions[1].to_string()),
+                                ("resident", resident.to_string()),
+                                ("pending_hue_sat", pending_hue_sat.to_string()),
+                                ("upload", (self.linear_texture.is_some()).to_string()),
+                                (
+                                    "wb_temperature",
+                                    self.rendered_wb
+                                        .map(|v| v.0.to_string())
+                                        .unwrap_or_else(|| "null".into()),
+                                ),
+                                (
+                                    "wb_tint",
+                                    self.rendered_wb
+                                        .map(|v| v.1.to_string())
+                                        .unwrap_or_else(|| "null".into()),
+                                ),
+                            ];
+                            fields.extend(fastcull::raw_trace::counters());
+                            fields.extend(self.display_provenance().fields());
+                            fastcull::raw_trace::event("scene_ready", fields);
+                        }
+                        Err(error) if self.initial_full_fallback => {
+                            log::warn!("Initial full RAW failed; using fit: {error}");
+                            self.full = false;
+                            self.view.fit();
+                            if let Err(e) = self.render() {
+                                self.error = Some(format!("{e:#}"));
+                            }
+                        }
+                        Err(error) if self.prefetching => {
+                            log::warn!("RAW full preload: {error}");
+                            self.prefetching = false;
+                            self.prefetch_at = None;
+                            self.full = false;
+                            self.confirmed = self.texture.is_some();
+                            self.status = "适屏显影就绪".into();
                         }
                         Err(error) => self.error = Some(error),
                     }
                 }
                 Event::Saved {
+                    revision,
                     result,
                     packet,
                     source_stamp,
@@ -1322,31 +1694,72 @@ impl Editor {
                     }
                     match result {
                         Ok((values, updates)) => {
-                            self.profile_materialize = false;
+                            self.last_saved_revision = Some(revision);
+                            let latest = revision == self.recipe_clock.revision();
+                            if latest {
+                                self.profile_materialize = false;
+                            }
                             self.save_error = None;
                             self.source_orientation = values.orientation;
                             self.original = values.clone();
                             self.base_orientation = self.draft_orientation;
-                            self.balance = Balance::Original;
+                            if latest {
+                                self.balance = Balance::Original;
+                            }
                             self.render_packet = self.packet.clone().unwrap_or_else(xmp::template);
-                            self.status = "已保存显影调整 · sRGB".into();
+                            self.exposure_limits = exposure_limits(&self.render_packet);
+                            self.status = if latest {
+                                "已保存显影调整 · sRGB"
+                            } else {
+                                "较早版本已保存 · 当前草稿尚未保存"
+                            }
+                            .into();
                             self.error = None;
                             // Applying a crop invalidates the previous texture. A
                             // manual save must still leave a fresh image visible.
-                            if self.texture.is_none()
+                            if (self.texture.is_none() || self.rendering)
                                 && let Err(error) = self.render()
                             {
                                 self.error = Some(format!("{error:#}"));
                             }
+                            let mut fields = revision.fields();
+                            fields.extend([
+                                ("ok", "true".into()),
+                                (
+                                    "current_recipe_revision",
+                                    self.recipe_clock.revision().sequence.to_string(),
+                                ),
+                                ("exposure_uev", updates.exposure.unwrap_or(0).to_string()),
+                            ]);
+                            fastcull::raw_trace::event("save_done", fields);
                             action = Action::Saved(Box::new((values, updates)));
                         }
                         Err(e) => {
+                            let mut fields = revision.fields();
+                            fields.extend([
+                                ("ok", "false".into()),
+                                ("error", fastcull::raw_trace::string(&e)),
+                            ]);
+                            fastcull::raw_trace::event("save_done", fields);
                             self.save_error = Some(e.clone());
                             self.error = Some(e);
                         }
                     }
                 }
-                _ => {}
+                Event::Scene {
+                    generation, ticket, ..
+                } => {
+                    let mut fields = ticket.requested.fields();
+                    fields.extend([
+                        ("generation", generation.to_string()),
+                        ("wanted_generation", self.generation.to_string()),
+                        (
+                            "current_recipe_revision",
+                            self.recipe_clock.revision().sequence.to_string(),
+                        ),
+                    ]);
+                    fastcull::raw_trace::event("scene_discarded", fields);
+                }
             }
         }
         if self.ready && !self.saving && !ctx.wants_keyboard_input() {
@@ -1395,6 +1808,7 @@ impl Editor {
         }
         egui::TopBottomPanel::top("raw-edit-title").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
+                crate::appearance::control(ui);
                 ui.strong("RAW 编辑");
                 ui.label(self.path.file_name().unwrap_or_default().to_string_lossy());
                 if self.rendering || self.saving || self.preparing {
@@ -1403,19 +1817,17 @@ impl Editor {
                 ui.weak(&self.status);
             });
         });
+        let mut histogram_slot = None;
         egui::SidePanel::right("raw-edit-controls")
             .exact_width(346.)
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_gray(35))
+                    .fill(crate::appearance::palette(ctx).panel)
                     .inner_margin(14.),
             )
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(8., 8.);
                 ui.spacing_mut().slider_rail_height = 3.;
-                ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_gray(165);
-                ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::from_gray(48);
-                ui.visuals_mut().widgets.hovered.bg_fill = Color32::from_gray(220);
                 egui::TopBottomPanel::bottom("raw-actions")
                     .frame(egui::Frame::new().inner_margin(egui::Margin {
                         top: 10,
@@ -1488,7 +1900,7 @@ impl Editor {
                         let valid = self.updates();
                         self.focus_overlay.control(ui);
                         if let Err(error) = &valid {
-                            ui.colored_label(Color32::LIGHT_RED, error.to_string());
+                            ui.colored_label(ui.visuals().error_fg_color, error.to_string());
                         }
                         if ui
                             .add_enabled(
@@ -1496,11 +1908,11 @@ impl Editor {
                                     && self.ready
                                     && valid.is_ok()
                                     && (self.dirty() || self.crop_editor.is_some())
-                                    && (self.confirmed || self.crop_ready)
-                                    && !self.rendering
+                                    && (self.confirmed || self.crop_ready || self.prefetching)
+                                    && (!self.rendering || self.prefetching)
                                     && self.changed_at.is_none(),
-                                egui::Button::new("保存调整到 XMP")
-                                    .fill(Color32::from_rgb(57, 100, 145))
+                                egui::Button::new(egui::RichText::new("保存调整到 XMP").color(Color32::WHITE))
+                                    .fill(Color32::from_rgb(49, 102, 211))
                                     .min_size(Vec2::new(ui.available_width(), 32.)),
                             )
                             .clicked()
@@ -1539,9 +1951,8 @@ impl Editor {
                     });
                     return;
                 }
-                let settings = self.preview_settings();
-                if let Some(histogram) = &mut self.histogram {
-                    histogram.show(ui, settings);
+                if self.histogram.is_some() {
+                    histogram_slot=Some(crate::raw_histogram::Histogram::allocate(ui));
                 } else {
                     ui.strong("直方图");
                     ui.add_space(124.);
@@ -1569,14 +1980,14 @@ impl Editor {
                                 &mut self.enable_light,
                                 "预览亮度调整；不改保存参数",
                             );
-                            match xmp::exposure_range(&self.render_packet) {
-                                Ok(range) => {
+                            match &self.exposure_limits {
+                                Ok((min, max)) => {
                                     changed |= adjustment_slider(
                                         ui,
                                         "曝光",
                                         &mut self.exposure,
-                                        f64::from(*range.start()) / 1e6
-                                            ..=f64::from(*range.end()) / 1e6,
+                                        f64::from(*min) / 1e6
+                                            ..=f64::from(*max) / 1e6,
                                         0.01,
                                         false,
                                         "",
@@ -1710,7 +2121,7 @@ impl Editor {
                         });
                         if let Some(error) = &self.error {
                             ui.separator();
-                            ui.colored_label(Color32::LIGHT_RED, error);
+                            ui.colored_label(ui.visuals().error_fg_color, error);
                         }
                         ui.add_space(8.);
                         egui::CollapsingHeader::new("显影信息").show(ui, |ui| {
@@ -1728,6 +2139,7 @@ impl Editor {
                         });
                     });
             });
+        let mut frame_plan = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.crop_editor.is_some() {
                 self.crop_canvas(ui);
@@ -1735,8 +2147,9 @@ impl Editor {
             }
             let (area, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-            ui.painter().rect_filled(area, 0., Color32::from_gray(18));
-            if let Some(texture) = &self.texture {
+            ui.painter()
+                .rect_filled(area, 0., crate::appearance::palette(ui.ctx()).canvas);
+            if let Some(texture) = self.texture.clone() {
                 let pixels = self
                     .source_size
                     .map(|size| {
@@ -1798,6 +2211,14 @@ impl Editor {
                         Err(error) => self.error = Some(format!("取样失败：{error:#}")),
                     }
                 }
+                let provenance = self.display_provenance();
+                let settings = self.preview_settings();
+                frame_plan = Some((settings, provenance));
+                self.last_frame_provenance = Some(provenance);
+                let display = crate::raw_preview::DisplayState {
+                    settings,
+                    provenance: Some(provenance),
+                };
                 if let Some(preview) = &self.preview {
                     let uv = [
                         egui::pos2(0., 0.),
@@ -1812,7 +2233,7 @@ impl Editor {
                             rect,
                             linear.clone(),
                             uv,
-                            self.preview_settings(),
+                            display,
                         );
                     } else {
                         preview.paint(
@@ -1826,7 +2247,7 @@ impl Editor {
                                 egui::pos2(1., 1.),
                                 egui::pos2(0., 1.),
                             ],
-                            self.preview_settings(),
+                            display,
                         );
                     }
                 } else {
@@ -1858,6 +2279,11 @@ impl Editor {
                 );
             }
         });
+        if let (Some(slot), Some((settings, provenance)), Some(histogram)) =
+            (histogram_slot, frame_plan, self.histogram.as_mut())
+        {
+            histogram.present(slot, settings, provenance);
+        }
         // Quality and view scale are independent: replacing the 1600px preview
         // with full detail must not move the image or change the displayed zoom.
         if self.view.needs_full()
@@ -1879,6 +2305,40 @@ impl Editor {
         if let Err(error) = crop_result {
             self.error = Some(format!("{error:#}"));
         }
+        // Prepare one bounded full-resolution image while the user examines fit.
+        // New WB/profile/crop work supersedes this generation through the same
+        // worker cancellation route; exposure stays in the live GPU recipe.
+        if self
+            .prefetch_at
+            .is_some_and(|t| t.elapsed() >= Duration::from_millis(500))
+            && !self.full
+            && !self.rendering
+            && !self.saving
+            && !self.preparing
+            && self.ready
+            && self.confirmed
+            && self.changed_at.is_none()
+            && self.crop_editor.is_none()
+            && !ctx.input(|i| i.pointer.primary_down())
+            && self
+                .source_size
+                .is_some_and(|s| s.max_elem() > 1600. && s.x * s.y <= 60_000_000.)
+        {
+            self.full = true;
+            match self.render() {
+                Ok(()) => {
+                    self.prefetching = true;
+                    self.confirmed = true;
+                    self.status = "适屏就绪 · 正在准备 100%".into();
+                    log::info!("RAW full preload queued");
+                }
+                Err(error) => {
+                    self.full = false;
+                    self.prefetch_at = None;
+                    log::warn!("RAW full preload queue: {error:#}");
+                }
+            }
+        }
         if self
             .changed_at
             .is_some_and(|t| t.elapsed() >= Duration::from_millis(250))
@@ -1889,18 +2349,81 @@ impl Editor {
             self.error = Some(format!("{e:#}"));
             self.changed_at = None;
         }
-        if self.rendering || self.saving || self.preparing || self.changed_at.is_some() {
+        if self.rendering
+            || self.saving
+            || self.preparing
+            || self.changed_at.is_some()
+            || (self.prefetch_at.is_some() && !self.full)
+        {
             ctx.request_repaint_after(Duration::from_millis(60));
         }
         if let Some(error) = self.preview.as_ref().and_then(|p| p.error()) {
             self.error = Some(format!("显影预览失败：{error}"));
         }
+        if self.texture.is_some() {
+            let settings = self.preview_settings();
+            if self.last_display != Some(settings) {
+                self.last_display = Some(settings);
+                let join = |values: &[f32]| {
+                    values
+                        .iter()
+                        .map(|v| format!("{v:.6}"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                self.trace_display_frame(vec![
+                    ("exposure", format!("{:.6}", settings.exposure)),
+                    ("basic", fastcull::raw_trace::string(&join(&settings.basic))),
+                    ("wb", fastcull::raw_trace::string(&join(&settings.wb))),
+                    (
+                        "temperature",
+                        fastcull::raw_trace::string(&self.temperature),
+                    ),
+                    ("tint", fastcull::raw_trace::string(&self.tint)),
+                    ("generation", self.generation.to_string()),
+                    ("rendering", self.rendering.to_string()),
+                    (
+                        "since_change_ms",
+                        self.changed_at.map_or_else(
+                            || "null".into(),
+                            |t| format!("{:.3}", t.elapsed().as_secs_f64() * 1000.),
+                        ),
+                    ),
+                ]);
+            }
+        }
         self.smoke(ctx);
         action
     }
+    fn trace_edit_input(&mut self, mut fields: Vec<(&'static str, String)>) {
+        let _ = self.refresh_recipe();
+        fields.extend(self.recipe_clock.revision().fields());
+        fastcull::raw_trace::event("edit_input", fields);
+    }
+    fn trace_display_frame(&self, mut fields: Vec<(&'static str, String)>) {
+        if let Some(p) = self.last_frame_provenance {
+            fields.extend(p.fields());
+        }
+        fastcull::raw_trace::event("display_frame", fields);
+    }
+    pub fn saved_revision(&self) -> Option<fastcull::raw_recipe::Revision> {
+        self.last_saved_revision
+    }
+    pub fn frame_provenance(&self) -> Option<fastcull::raw_recipe::FrameProvenance> {
+        self.last_frame_provenance
+    }
+    fn smoke_directory(&self) -> Option<PathBuf> {
+        std::env::var_os("FASTCULL_RAW_EDIT_SMOKE_DIR").map(|p| {
+            let root = PathBuf::from(p);
+            if std::env::var_os("FASTCULL_RAW_REUSE_SMOKE").is_some() {
+                root.join(self.path.file_stem().unwrap_or_default())
+            } else {
+                root
+            }
+        })
+    }
     fn smoke(&mut self, ctx: &egui::Context) {
-        let Some(directory) = std::env::var_os("FASTCULL_RAW_EDIT_SMOKE_DIR").map(PathBuf::from)
-        else {
+        let Some(directory) = self.smoke_directory() else {
             return;
         };
         fs::create_dir_all(&directory).unwrap();
@@ -1908,10 +2431,31 @@ impl Editor {
             if let egui::Event::Screenshot {
                 image, user_data, ..
             } = event
-                && let Some(name) = user_data
-                    .data
-                    .and_then(|v| v.downcast_ref::<String>().cloned())
+                && let Some(name) = user_data.data.and_then(|v| {
+                    v.downcast_ref::<(String, Option<fastcull::raw_recipe::FrameProvenance>)>()
+                        .cloned()
+                })
             {
+                let (name, provenance) = name;
+                // The screenshot returns asynchronously. Keep the recipe from
+                // its request frame, even if newer input arrives before it.
+                let mut fields = provenance.map_or_else(Vec::new, |p| p.fields());
+                fields.push(("name", fastcull::raw_trace::string(&name)));
+                fastcull::raw_trace::event("capture", fields);
+                if name == "00-loaded.png"
+                    && std::env::var_os("FASTCULL_RAW_FIRST_100_SMOKE").is_some()
+                {
+                    assert!(!self.view.is_fit() && self.full && !self.rendering);
+                    fs::write(
+                        directory.join("first-100-capture-us.txt"),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_micros()
+                            .to_string(),
+                    )
+                    .unwrap();
+                }
                 let file = fs::File::create(directory.join(name)).unwrap();
                 let mut png = png::Encoder::new(file, image.size[0] as u32, image.size[1] as u32);
                 png.set_color(png::ColorType::Rgba);
@@ -1930,6 +2474,84 @@ impl Editor {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
+        let capture_provenance = self.frame_provenance();
+        let request = |name: &str| {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new((
+                name.to_owned(),
+                capture_provenance,
+            ))))
+        };
+        // Measure the very next painted WB frame before queuing sensor work.
+        // This path is enabled only by the native latency acceptance harness.
+        if self.smoke_step == 9 {
+            let gain = self.preview_settings().wb;
+            assert!(gain.iter().all(|v| v.is_finite()));
+            if self.rendered_wb != Some((4850., 17.)) {
+                assert_ne!(gain, [1.; 3]);
+            }
+            let elapsed = self.smoke_at.elapsed().as_secs_f64() * 1000.;
+            fs::write(
+                directory.join("immediate-wb.txt"),
+                format!(
+                    "paint_ms={elapsed:.3} gain={gain:?} rendering={}\n",
+                    self.rendering
+                ),
+            )
+            .unwrap();
+            fastcull::raw_trace::event(
+                "wb_immediate",
+                vec![
+                    ("paint_ms", format!("{elapsed:.3}")),
+                    ("rendering", self.rendering.to_string()),
+                ],
+            );
+            request("01-immediate-wb.png");
+            self.smoke_step = 10;
+            ctx.request_repaint();
+            return;
+        }
+        if self.smoke_step == 10 {
+            if directory.join("01-immediate-wb.png").is_file() {
+                self.render().unwrap();
+                self.smoke_step = 2;
+            }
+            ctx.request_repaint();
+            return;
+        }
+        if self.smoke_step == 11 {
+            let before: u64 = fs::read_to_string(directory.join("preload-generation.txt"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(
+                self.generation, before,
+                "100% queued a new decode despite completed preload"
+            );
+            assert!(!self.rendering && self.full && !self.view.is_fit());
+            fs::write(
+                directory.join("preloaded-100.txt"),
+                format!(
+                    "paint_ms={:.3} generation={} rendering=false full=true",
+                    self.smoke_at.elapsed().as_secs_f64() * 1000.,
+                    self.generation
+                ),
+            )
+            .unwrap();
+            request("00-preloaded-100.png");
+            self.smoke_step = 12;
+            return;
+        }
+        // Let the preload screenshot drain before the latency step so its GPU
+        // readback does not pollute the input-to-next-frame marker.
+        if self.smoke_step == 12 {
+            if directory.join("00-preloaded-100.png").is_file() {
+                self.smoke_step = 8;
+                ctx.request_repaint();
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(20));
+            }
+            return;
+        }
         if self.texture.is_none()
             || self.rendering
             || self.saving
@@ -1938,23 +2560,75 @@ impl Editor {
         {
             return;
         }
-        let request = |name: &str| {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
-                name.to_owned(),
-            )))
-        };
         match self.smoke_step {
             0 => {
+                if std::env::var_os("FASTCULL_RAW_FIRST_DETAIL_SMOKE").is_some() {
+                    assert!(self.full, "first native frame was only a fit preview");
+                    #[cfg(any(windows, target_os = "macos"))]
+                    if self
+                        .linear_texture
+                        .as_ref()
+                        .is_some_and(|t| !t.ready_for_display())
+                    {
+                        ctx.request_repaint();
+                        return;
+                    }
+                    fs::write(
+                        directory.join("first-detail-ms.txt"),
+                        format!("{:.3}", self.smoke_at.elapsed().as_secs_f64() * 1000.),
+                    )
+                    .unwrap();
+                }
                 request("00-loaded.png");
                 self.smoke_step = 1;
                 self.smoke_at = Instant::now();
             }
             1 if directory.join("00-loaded.png").is_file() => {
+                if std::env::var_os("FASTCULL_RAW_PRELOAD_SMOKE").is_some() {
+                    if !self.full || self.rendering {
+                        ctx.request_repaint_after(Duration::from_millis(50));
+                        return;
+                    }
+                    #[cfg(any(windows, target_os = "macos"))]
+                    if self
+                        .linear_texture
+                        .as_ref()
+                        .is_some_and(|t| !t.ready_for_display())
+                    {
+                        ctx.request_repaint();
+                        return;
+                    }
+                    fs::write(
+                        directory.join("preload-generation.txt"),
+                        self.generation.to_string(),
+                    )
+                    .unwrap();
+                    fs::write(
+                        directory.join("preload-ready-ms.txt"),
+                        format!("{:.3}", self.smoke_at.elapsed().as_secs_f64() * 1000.),
+                    )
+                    .unwrap();
+                    fastcull::raw_trace::event(
+                        "preload_switch",
+                        vec![("generation", self.generation.to_string())],
+                    );
+                    self.view.set_scale(1.);
+                    self.smoke_step = 11;
+                    self.smoke_at = Instant::now();
+                    ctx.request_repaint();
+                    return;
+                }
                 // Re-request the exact same recipe to measure a real cache hit.
                 self.render().unwrap();
                 self.smoke_step = 8;
             }
             8 => {
+                if std::env::var_os("FASTCULL_RAW_DRAG_SMOKE").is_some() {
+                    self.drag_index = 0;
+                    self.smoke_step = 20;
+                    ctx.request_repaint();
+                    return;
+                }
                 self.exposure = (self.exposure + 0.5).min(5.);
                 self.balance = Balance::Custom;
                 self.basic = BasicAdjustments {
@@ -1968,6 +2642,18 @@ impl Editor {
                 };
                 self.temperature = "4850".into();
                 self.tint = "17".into();
+                self.trace_edit_input(vec![
+                    (
+                        "exposure_uev",
+                        (self.exposure * 1_000_000.).round().to_string(),
+                    ),
+                    ("temperature", "4850".into()),
+                    ("tint", "17".into()),
+                    (
+                        "basic",
+                        fastcull::raw_trace::string("20,-35,25,15,-10,20,10"),
+                    ),
+                ]);
                 if let Ok(profile) = std::env::var("FASTCULL_RAW_EDIT_SMOKE_PROFILE") {
                     assert!(
                         self.profile_choices.iter().any(|p| p.name == profile),
@@ -1975,8 +2661,14 @@ impl Editor {
                     );
                     self.profile_choice = profile;
                 }
-                self.render().unwrap();
-                self.smoke_step = 2;
+                if std::env::var_os("FASTCULL_RAW_LATENCY_SMOKE").is_some() {
+                    self.smoke_step = 9;
+                    self.smoke_at = Instant::now();
+                    ctx.request_repaint();
+                } else {
+                    self.render().unwrap();
+                    self.smoke_step = 2;
+                }
             }
             2 => {
                 request("01-edited.png");
@@ -1993,7 +2685,15 @@ impl Editor {
                 self.smoke_step = 5;
             }
             5 if directory.join("02-full.png").is_file() => {
+                let revision = match self.refresh_recipe() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.error = Some(format!("{error:#}"));
+                        return;
+                    }
+                };
                 self.worker.save(SaveJob {
+                    revision,
                     source: self.path.clone(),
                     source_stamp: self.source_stamp.clone(),
                     expected: self.packet.clone(),
@@ -2024,10 +2724,102 @@ impl Editor {
                 .unwrap();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+            20 => {
+                let count = std::env::var("FASTCULL_RAW_DRAG_SMOKE")
+                    .ok()
+                    .and_then(|v| v.parse::<u8>().ok())
+                    .unwrap_or(12)
+                    .clamp(2, 64);
+                if self.drag_index >= count {
+                    self.balance = Balance::Custom;
+                    self.temperature = "4850".into();
+                    self.tint = "17".into();
+                    self.trace_edit_input(vec![
+                        ("kind", fastcull::raw_trace::string("drag-final-wb")),
+                        (
+                            "exposure_uev",
+                            (self.exposure * 1_000_000.).round().to_string(),
+                        ),
+                        ("temperature", fastcull::raw_trace::string("4850")),
+                        ("tint", fastcull::raw_trace::string("17")),
+                    ]);
+                    if let Ok(profile) = std::env::var("FASTCULL_RAW_EDIT_SMOKE_PROFILE") {
+                        assert!(
+                            self.profile_choices.iter().any(|p| p.name == profile),
+                            "smoke profile not available"
+                        );
+                        self.profile_choice = profile;
+                    }
+                    if let Err(error) = self.render() {
+                        self.error = Some(format!("{error:#}"));
+                    }
+                    fastcull::raw_trace::event(
+                        "drag_done",
+                        vec![
+                            ("count", count.to_string()),
+                            ("generation", self.generation.to_string()),
+                            (
+                                "exposure_uev",
+                                (self.exposure * 1_000_000.).round().to_string(),
+                            ),
+                        ],
+                    );
+                    self.smoke_step = 2;
+                    ctx.request_repaint();
+                    return;
+                }
+                let index = self.drag_index;
+                let t = f32::from(index) / f32::from(count - 1);
+                self.exposure = f64::from(-2. + 4. * t);
+                self.basic = BasicAdjustments {
+                    contrast: Some((-50. + 100. * t).round() as i32),
+                    highlights: Some((-30. + 60. * t).round() as i32),
+                    shadows: Some((30. - 60. * t).round() as i32),
+                    whites: Some((20. - 40. * t).round() as i32),
+                    blacks: Some((-20. + 40. * t).round() as i32),
+                    vibrance: Some((40. * t).round() as i32),
+                    saturation: Some((20. - 40. * t).round() as i32),
+                };
+                self.drag_index += 1;
+                self.trace_edit_input(vec![
+                    ("kind", fastcull::raw_trace::string("drag")),
+                    ("index", index.to_string()),
+                    (
+                        "exposure_uev",
+                        (self.exposure * 1_000_000.).round().to_string(),
+                    ),
+                    (
+                        "basic",
+                        fastcull::raw_trace::string(
+                            &[
+                                self.basic.contrast,
+                                self.basic.highlights,
+                                self.basic.shadows,
+                                self.basic.whites,
+                                self.basic.blacks,
+                                self.basic.vibrance,
+                                self.basic.saturation,
+                            ]
+                            .map(|v| v.unwrap_or(0).to_string())
+                            .join(","),
+                        ),
+                    ),
+                    (
+                        "temperature",
+                        fastcull::raw_trace::string(&self.temperature),
+                    ),
+                    ("tint", fastcull::raw_trace::string(&self.tint)),
+                ]);
+                ctx.request_repaint();
+                return;
+            }
             _ => {}
         }
         ctx.request_repaint_after(Duration::from_millis(80));
     }
+}
+fn initial_full_eligible(size: Option<Vec2>, gpu: bool) -> bool {
+    gpu && size.is_some_and(|s| s.x > 0. && s.y > 0. && s.x * s.y <= 60_000_000.)
 }
 
 fn initial_profile(path: &Path, values: &Values) -> String {
@@ -2213,6 +3005,356 @@ fn adjustment_slider(
 mod tests {
     use super::*;
     #[test]
+    fn histogram_and_painted_frame_share_the_same_recipe_after_display_edits() {
+        let (_dir, ctx, mut editor, _send) = idle_preload_fixture(Vec2::new(6., 4.));
+        editor.worker.stop.store(true, Ordering::Relaxed);
+        editor.prefetch_at = None;
+        let generation = editor.generation;
+        for index in 0..16 {
+            editor.exposure = if index % 2 == 0 { 1.25 } else { -0.75 };
+            editor.basic.saturation = Some(index * 4 - 30);
+            let _ = ctx.run(Default::default(), |ctx| {
+                editor.show(ctx);
+            });
+            assert_eq!(
+                editor.histogram.as_ref().unwrap().provenance(),
+                editor.frame_provenance()
+            );
+            assert_eq!(
+                editor.frame_provenance().unwrap().displayed,
+                editor.recipe_clock.revision()
+            );
+            assert_eq!(editor.generation, generation);
+        }
+    }
+    #[test]
+    fn recipe_refresh_fences_replaced_render_source_even_when_xmp_is_unchanged() {
+        let (_dir, _ctx, mut editor, _send) = idle_preload_fixture(Vec2::new(6., 4.));
+        editor.worker.stop.store(true, Ordering::Relaxed);
+        editor.refresh_recipe().unwrap();
+        let old = editor.recipe_clock.ticket();
+        editor.render_source = editor.path.with_file_name("prepared.nef");
+        editor.refresh_recipe().unwrap();
+        assert!(!editor.recipe_clock.accepts(&old));
+        let old = editor.recipe_clock.ticket();
+        editor.nonce += 1;
+        editor.refresh_recipe().unwrap();
+        assert!(!editor.recipe_clock.accepts(&old));
+    }
+    #[test]
+    fn recipe_rebases_display_edits_but_rejects_late_wb_even_with_equal_generation() {
+        let (_dir, ctx, mut editor, send) = idle_preload_fixture(Vec2::new(6., 4.));
+        editor.worker.stop.store(true, Ordering::Relaxed);
+        editor.prefetch_at = None;
+        editor.refresh_recipe().unwrap();
+        let ticket = editor.recipe_clock.ticket();
+        let generation = editor.generation;
+        editor.exposure = 1.;
+        editor.refresh_recipe().unwrap();
+        assert!(editor.recipe_clock.accepts(&ticket));
+        editor.balance = Balance::Custom;
+        editor.temperature = "6500".into();
+        editor.tint = "0".into();
+        editor.refresh_recipe().unwrap();
+        editor.confirmed = false;
+        send.send(Event::Scene {
+            generation,
+            ticket,
+            image: Ok(scene_fixture([6, 4])),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(!editor.confirmed);
+        let ticket = editor.recipe_clock.ticket();
+        let mut frame = scene_fixture([6, 4]);
+        frame.temperature = Some(6500.);
+        send.send(Event::Scene {
+            generation,
+            ticket,
+            image: Ok(frame),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(editor.confirmed);
+        assert_eq!(
+            editor.display_provenance().displayed,
+            editor.recipe_clock.revision()
+        );
+        assert!(!editor.display_provenance().provisional);
+    }
+    #[test]
+    fn late_save_receipt_preserves_newer_white_balance_draft() {
+        let (_dir, ctx, mut editor, send) = idle_preload_fixture(Vec2::new(6., 4.));
+        editor.worker.stop.store(true, Ordering::Relaxed);
+        editor.prefetch_at = None;
+        let saved = editor.refresh_recipe().unwrap();
+        editor.balance = Balance::Custom;
+        editor.temperature = "7500".into();
+        editor.tint = "12".into();
+        editor.refresh_recipe().unwrap();
+        let packet = editor.render_packet.clone();
+        send.send(Event::Saved {
+            revision: saved,
+            result: Ok((xmp::parse_values(&packet).unwrap(), Updates::default())),
+            packet: Some(packet),
+            source_stamp: None,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(editor.balance == Balance::Custom);
+        assert_eq!(editor.temperature, "7500");
+        assert_eq!(editor.tint, "12");
+        assert_eq!(editor.saved_revision(), Some(saved));
+        assert_ne!(editor.refresh_recipe().unwrap(), saved);
+        assert!(editor.dirty());
+    }
+    #[test]
+    fn initial_full_policy_uses_native_pixels_and_a_bounded_budget() {
+        assert!(initial_full_eligible(Some(Vec2::new(6000., 4000.)), true));
+        assert!(initial_full_eligible(Some(Vec2::new(6000., 10000.)), true));
+        assert!(!initial_full_eligible(Some(Vec2::new(6001., 10000.)), true));
+        assert!(!initial_full_eligible(None, true));
+        assert!(!initial_full_eligible(Some(Vec2::new(6000., 4000.)), false));
+    }
+    #[test]
+    fn deferred_initial_render_is_requested_once_after_metadata() {
+        let (_dir, ctx, mut editor, send) = idle_preload_fixture(Vec2::new(6000., 4000.));
+        editor.worker.stop.store(true, Ordering::Relaxed);
+        editor.generation = editor.worker.cancel_preview();
+        editor.initial_pending = true;
+        let before = editor.generation;
+        send.send(Event::Dimensions {
+            size: Vec2::new(6000., 4000.),
+            orientation: 1,
+        })
+        .unwrap();
+        send.send(Event::QuickFailed).unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert_eq!(editor.generation, before + 1);
+        assert!(!editor.initial_pending && editor.rendering);
+    }
+    #[test]
+    fn failed_initial_full_falls_back_once_then_reports_errors() {
+        let (_dir, ctx, mut editor, send) = idle_preload_fixture(Vec2::new(6000., 4000.));
+        editor.full = true;
+        editor.initial_full_fallback = true;
+        editor.rendering = true;
+        let before = editor.generation;
+        send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
+            generation: before,
+            image: Err("full unavailable".into()),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(
+            !editor.full
+                && !editor.initial_full_fallback
+                && editor.view.is_fit()
+                && editor.generation > before
+        );
+        send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
+            generation: editor.generation,
+            image: Err("fit unavailable".into()),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(editor.error.is_some());
+    }
+    fn idle_preload_fixture(
+        size: Vec2,
+    ) -> (
+        tempfile::TempDir,
+        egui::Context,
+        Editor,
+        mpsc::Sender<Event>,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preload.ARW");
+        fs::write(&path, b"private metadata fixture").unwrap();
+        let ctx = egui::Context::default();
+        let mut editor = Editor::new(path, &ctx, None, None).unwrap();
+        let (send, receive) = mpsc::channel();
+        editor.worker.receive = receive;
+        editor.source_size = Some(size);
+        send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
+            generation: editor.generation,
+            image: Ok(scene_fixture([6, 4])),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        (directory, ctx, editor, send)
+    }
+    #[test]
+    fn full_preload_respects_memory_budget_and_pending_user_work() {
+        let (_dir, ctx, mut editor, _send) = idle_preload_fixture(Vec2::new(12000., 8000.));
+        assert!(editor.prefetch_at.is_none());
+        editor.source_size = Some(Vec2::new(6000., 4000.));
+        editor.prefetch_at = Some(Instant::now() - Duration::from_secs(1));
+        editor.changed_at = Some(Instant::now());
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(!editor.full);
+        editor.changed_at = None;
+        editor.saving = true;
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(!editor.full);
+    }
+    #[test]
+    fn failed_full_preload_keeps_fit_and_does_not_retry_in_a_loop() {
+        let (_dir, ctx, mut editor, send) = idle_preload_fixture(Vec2::new(6000., 4000.));
+        editor.full = true;
+        editor.prefetching = true;
+        editor.rendering = true;
+        editor.confirmed = false;
+        send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
+            generation: editor.generation,
+            image: Err("test GPU loss".into()),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(!editor.full && !editor.rendering && editor.confirmed && editor.error.is_none());
+        assert!(editor.prefetch_at.is_none());
+        assert_eq!(editor.texture.as_ref().unwrap().size(), [6, 4]);
+    }
+    #[test]
+    fn saving_cancels_full_preload_and_rejects_its_late_frame() {
+        let (_dir, ctx, mut editor, send) = idle_preload_fixture(Vec2::new(6000., 4000.));
+        let old = editor.generation;
+        editor.full = true;
+        editor.prefetching = true;
+        editor.rendering = true;
+        editor.rating = 2;
+        assert!(!editor.auto_save().unwrap());
+        assert!(
+            editor.saving && !editor.prefetching && !editor.rendering && editor.generation > old
+        );
+        send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
+            generation: old,
+            image: Ok(scene_fixture([8, 5])),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert_eq!(editor.texture.as_ref().unwrap().size(), [6, 4]);
+    }
+    #[test]
+    fn idle_fit_preloads_full_detail_without_waiting_for_zoom() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preload.ARW");
+        fs::write(&path, b"private preload fixture").unwrap();
+        let ctx = egui::Context::default();
+        let mut editor = Editor::new(path, &ctx, None, None).unwrap();
+        let (send, receive) = mpsc::channel();
+        editor.worker.receive = receive;
+        editor.source_size = Some(Vec2::new(6000., 4000.));
+        send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
+            generation: editor.generation,
+            image: Ok(scene_fixture([6, 4])),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(!editor.full && editor.view.is_fit());
+        editor.prefetch_at = Some(Instant::now() - Duration::from_secs(1));
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert!(
+            editor.full && editor.rendering,
+            "idle fit must prepare full detail before the user clicks 100%"
+        );
+        assert!(
+            editor.view.is_fit(),
+            "background detail preparation changed zoom"
+        );
+        let old_generation = editor.generation;
+        editor.balance = Balance::Custom;
+        editor.temperature = "6200".into();
+        editor.tint = "10".into();
+        editor.render().unwrap();
+        assert!(editor.generation > old_generation && !editor.prefetching);
+        send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
+            generation: old_generation,
+            image: Ok(scene_fixture([8, 5])),
+            ms: 0.,
+            cached: false,
+        })
+        .unwrap();
+        let _ = ctx.run(Default::default(), |ctx| {
+            editor.show(ctx);
+        });
+        assert_eq!(
+            editor.texture.as_ref().unwrap().size(),
+            [6, 4],
+            "stale prefetch replaced the newer WB generation"
+        );
+    }
+    #[test]
     fn dng_default_preserves_saved_profile_but_not_an_unrelated_sidecar() {
         let dir = tempfile::tempdir().unwrap();
         let raw = dir.path().join("photo.dng");
@@ -2311,6 +3453,9 @@ mod tests {
         };
         Box::new(Frame {
             size,
+            pending_hue_sat: None,
+            #[cfg(any(windows, target_os = "macos"))]
+            resident: None,
             pixels: vec![[0.18, 0.18, 0.18, 1.]; size[0] * size[1]],
             recipe: Recipe {
                 extra_look: None,
@@ -2495,6 +3640,10 @@ mod tests {
             let mut bounds = Vec::new();
             for size in [[160, 120], [1600, 1200]] {
                 send.send(Event::Scene {
+                    ticket: {
+                        editor.refresh_recipe().unwrap();
+                        editor.recipe_clock.ticket()
+                    },
                     generation: editor.generation,
                     image: Ok(scene_fixture(size)),
                     ms: 0.,
@@ -2546,6 +3695,10 @@ mod tests {
         })
         .unwrap();
         send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
             generation: 3,
             image: Ok(scene_fixture([6, 4])),
             ms: 0.,
@@ -2558,6 +3711,10 @@ mod tests {
         assert!(!editor.confirmed);
         assert_eq!(editor.source_size, Some(Vec2::new(6000., 4000.)));
         send.send(Event::Scene {
+            ticket: {
+                editor.refresh_recipe().unwrap();
+                editor.recipe_clock.ticket()
+            },
             generation: 4,
             image: Ok(scene_fixture([6, 4])),
             ms: 0.,

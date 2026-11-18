@@ -384,7 +384,7 @@ impl Editor {
         ui.weak("锁定比例时，拖动角点自动适应横拍 / 竖拍。解锁后可自由改变宽高。");
         ui.weak("Enter 应用 · Esc 取消 · Ctrl/Cmd+Z 撤销");
         if let Some(e) = self.error.as_ref().or(self.presets_error.as_ref()) {
-            ui.colored_label(Color32::LIGHT_RED, e);
+            ui.colored_label(ui.visuals().error_fg_color, e);
         }
         ui.separator();
         let mut action = Action::None;

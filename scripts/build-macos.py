@@ -117,8 +117,9 @@ def main():
          contents / "MacOS/fastcull", scratch / "raw-gui"])
     shutil.copytree(app, plugin / "FastCull.app")
     for relative in ("bridge/FastCull.jsx", "scripts/install-macos.command", "scripts/build-macos.py",
-                     "native/raw_bridge.cpp", "native/white_balance.h", "native/white_balance_table.inc",
+                     "native/raw_bridge.cpp", "native/sensor_checkpoint.h", "native/white_balance.h", "native/white_balance_table.inc",
                      "vendor/LibRaw-0.22.2.zip", "vendor/ADOBE-DNG-SDK-LICENSE.txt", "docs/MACOS.md",
+                     "docs/MAC-PERFORMANCE-2026-11-10.md", "docs/macos-performance-2026-11-10.json",
                      "docs/diagnostics/COLOR-EMBEDDED-METAL-2026-11-02.md",
                      "docs/diagnostics/ACR-COLOR-2026-11-03.md", "docs/acr-color-validation-2026-11-03.json",
                      "docs/diagnostics/RAW-PROFILE-SELECTOR-2026-11-03.md", "docs/raw-profile-validation-2026-11-03.json",

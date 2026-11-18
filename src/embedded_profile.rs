@@ -153,6 +153,11 @@ pub fn read(path: &Path) -> Result<Vec<Profile>> {
     {
         return Ok(Vec::new());
     }
+    static CACHE: crate::raw_profile_cache::Cache<Vec<Profile>> =
+        crate::raw_profile_cache::Cache::new();
+    CACHE.read(path, || read_uncached(path))
+}
+fn read_uncached(path: &Path) -> Result<Vec<Profile>> {
     let file = File::open(path)?;
     let len = file.metadata()?.len();
     let mut reader = Reader {

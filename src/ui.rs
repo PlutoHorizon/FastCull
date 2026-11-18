@@ -12,8 +12,6 @@ use fastcull::{
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
 
-const PANEL: Color32 = Color32::from_rgb(32, 35, 40);
-const BG: Color32 = Color32::from_rgb(20, 22, 26);
 const RED: Color32 = Color32::from_rgb(201, 79, 79);
 const COLORS: [(&str, Color32); 5] = [
     ("Red", Color32::from_rgb(206, 75, 66)),
@@ -162,10 +160,16 @@ impl Photo {
     }
 }
 pub struct App {
+    settings: crate::settings::Settings,
+    viewed: std::collections::HashSet<usize>,
+    pending_focus: Option<usize>,
     focus_overlay: crate::focus_overlay::Overlay,
     raw_windows: Arc<crate::raw_window::Windows>,
     raw_parent_lock: crate::focus::ParentLock,
     raw_smoke_started: bool,
+    raw_smoke_at: Option<Instant>,
+    raw_prewarmed: bool,
+    raw_prewarm_at: Option<Instant>,
     crop_editor: Option<crate::crop_ui::Editor>,
     crop_requested: bool,
     baselines: crate::exposure::Baselines,
@@ -356,10 +360,16 @@ impl App {
         };
         Self {
             folder_editor,
+            settings: crate::settings::Settings::load(),
+            viewed: Default::default(),
+            pending_focus: None,
             focus_overlay: Default::default(),
             raw_windows: crate::raw_window::Windows::new(session.clone()),
             raw_parent_lock: Default::default(),
             raw_smoke_started: false,
+            raw_smoke_at: None,
+            raw_prewarmed: false,
+            raw_prewarm_at: None,
             crop_editor: None,
             crop_requested: false,
             mover: None,
@@ -540,9 +550,29 @@ impl App {
             return;
         }
         if let Some(c) = &mut self.compare {
+            if self.settings.focus_on_unviewed && c.views[c.active].zoom > 0. {
+                self.loupe_positions
+                    .insert(self.current, c.views[c.active].pan);
+                if let Some(pan) = self.loupe_positions.get(&i) {
+                    c.views[c.active].pan = *pan;
+                }
+            }
             c.indices[c.active] = i;
         }
         if i != self.current {
+            if !self.grid {
+                self.viewed.insert(self.current);
+            }
+            let at_100 = self
+                .compare
+                .as_ref()
+                .map_or(self.zoom, |c| (c.views[c.active].zoom - 1.).abs() < 0.0001);
+            self.pending_focus = (self.settings.focus_on_unviewed
+                && at_100
+                && !self.grid
+                && !self.viewed.contains(&i)
+                && !self.loupe_positions.contains_key(&i))
+            .then_some(i);
             if self.compare.is_none() && self.zoom {
                 self.loupe_positions.insert(self.current, self.pan);
                 if let Some(pan) = self.loupe_positions.get(&i) {
@@ -616,6 +646,7 @@ impl App {
         self.grid_scroll |= changed;
     }
     fn set_zoom(&mut self, zoom: bool) {
+        self.pending_focus = None;
         if let Some(c) = &self.compare {
             self.zoom_compare(c.active, if zoom { 1. } else { 0. });
         }
@@ -706,6 +737,7 @@ impl App {
         });
     }
     fn rotate(&mut self, d: i32) {
+        self.pending_focus = None;
         if self.develop_pending(self.current) {
             self.error = Some("正在读取 Lightroom 裁切和旋转，请稍后再试。".into());
             return;
@@ -892,6 +924,8 @@ impl App {
         }
     }
     fn move_view(&mut self, delta: Vec2, ppp: f32) {
+        // A late metadata response must never override the user's own pan.
+        self.pending_focus = None;
         let Some(c) = &self.compare else {
             if let Some(size) = self.native_size(self.current) {
                 let shown = self.displayed_size(self.current, size) / ppp;
@@ -918,6 +952,54 @@ impl App {
             .unwrap()
             .translate(side, delta / shown, limits);
     }
+    fn apply_auto_focus(&mut self, i: usize, viewport: Vec2, ctx: &egui::Context) {
+        if self.pending_focus != Some(i) {
+            return;
+        }
+        let side = self
+            .compare
+            .as_ref()
+            .and_then(|c| c.indices.iter().position(|j| *j == i));
+        let at_100 = side.map_or(self.zoom, |side| {
+            (self.compare.as_ref().unwrap().views[side].zoom - 1.).abs() < 0.0001
+        });
+        if !self.settings.focus_on_unviewed || !at_100 || self.grid {
+            self.pending_focus = None;
+            return;
+        }
+        // Start metadata I/O independently of the overlay toggle.
+        self.focus_overlay.lookup(&self.paths[i], ctx);
+        let photo = &self.photos[i];
+        if !photo.loaded || photo.info.is_none() || self.develop_pending(i) {
+            return;
+        }
+        let Some(size) = self.native_size(i) else {
+            return;
+        };
+        let crop = photo.values.crop.unwrap_or_default();
+        let orientation = photo.orientation();
+        let info = match self.focus_overlay.lookup(&self.paths[i], ctx) {
+            crate::focus_overlay::Lookup::Loading => return,
+            crate::focus_overlay::Lookup::Unavailable => {
+                self.pending_focus = None;
+                return;
+            }
+            crate::focus_overlay::Lookup::Ready(info) => info,
+        };
+        let anchor = crate::focus_overlay::focus_anchor(info, size, orientation, crop);
+        self.pending_focus = None;
+        if let Some(anchor) = anchor {
+            let shown = self.displayed_size(i, size) / ctx.pixels_per_point();
+            let limits = (shown - viewport).max(Vec2::ZERO) * 0.5 / shown;
+            let pan = anchor.clamp(-limits, limits);
+            if let Some(side) = side {
+                // Replacing a candidate must leave the reference photo where the user put it.
+                self.compare.as_mut().unwrap().views[side].pan = pan;
+            } else {
+                self.pan = pan;
+            }
+        }
+    }
     fn compare_geometry(&self, ppp: f32) -> [Option<Vec2>; 2] {
         let c = self.compare.as_ref().unwrap();
         std::array::from_fn(|side| {
@@ -927,6 +1009,7 @@ impl App {
         })
     }
     fn zoom_compare(&mut self, side: usize, target: f32) {
+        self.pending_focus = None;
         let c = self.compare.as_ref().unwrap();
         let fit = std::array::from_fn(|side| {
             let i = c.indices[side];
@@ -1134,6 +1217,7 @@ impl App {
         }
     }
     fn activate_compare(&mut self, side: usize) {
+        self.pending_focus = None;
         let c = self.compare.as_mut().unwrap();
         if c.active == side && self.current == c.indices[side] {
             return;
@@ -1218,7 +1302,7 @@ impl App {
                 self.compare_sizes[side] = area.size();
                 self.fit_edge = preview_edge(area.size(), ctx.pixels_per_point());
                 let painter = ui.painter_at(area);
-                painter.rect_filled(area, 0., BG);
+                painter.rect_filled(area, 0., crate::appearance::palette(ctx).canvas);
                 self.request(i, Level::Fit(self.fit_edge));
                 let mut view = self.compare.as_ref().unwrap().views[side];
                 if view.zoom > 0. {
@@ -1233,6 +1317,17 @@ impl App {
                     .or_else(|| self.thumbs.get(i))
                     .filter(|_| view.zoom <= 0. || native.is_some());
                 if let Some(t) = texture {
+                    self.viewed.insert(i);
+                    if response.clicked()
+                        || response.drag_started()
+                        || response.dragged()
+                        || (response.hovered()
+                            && ctx.input(|input| input.smooth_scroll_delta.y != 0.))
+                    {
+                        self.pending_focus = None;
+                    }
+                    self.apply_auto_focus(i, area.size(), ctx);
+                    view = self.compare.as_ref().unwrap().views[side];
                     let size = self.displayed_size(i, source.unwrap_or_else(|| t.size_vec2()));
                     let native_size = size;
                     let fit_zoom = (area.width() / native_size.x)
@@ -1321,14 +1416,14 @@ impl App {
                         egui::Align2::CENTER_CENTER,
                         error.map_or("正在加载预览…", String::as_str),
                         egui::FontId::proportional(16.),
-                        Color32::WHITE,
+                        crate::appearance::palette(ctx).muted,
                     );
                 }
                 if self.compare.as_ref().unwrap().active == side {
                     painter.rect_stroke(
                         area,
                         0.,
-                        Stroke::new(2., Color32::LIGHT_BLUE),
+                        Stroke::new(2., crate::appearance::palette(ctx).accent),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -1412,12 +1507,32 @@ impl App {
                         .as_deref()
                         .is_some_and(|v| v.eq_ignore_ascii_case(label));
                     if ui
-                        .add_enabled(
-                            enabled,
-                            egui::Button::new(if selected { "■" } else { " " })
-                                .fill(color)
-                                .min_size(Vec2::splat(18.)),
-                        )
+                        .add_enabled_ui(enabled, |ui| {
+                            let (rect, response) =
+                                ui.allocate_exact_size(Vec2::splat(20.), egui::Sense::click());
+                            let painter = ui.painter();
+                            painter.circle_filled(
+                                rect.center(),
+                                6.,
+                                color.gamma_multiply(if enabled { 1. } else { 0.4 }),
+                            );
+                            if selected || response.hovered() {
+                                painter.circle_stroke(
+                                    rect.center(),
+                                    9.,
+                                    Stroke::new(
+                                        1.5,
+                                        if selected {
+                                            crate::appearance::palette(ui.ctx()).accent
+                                        } else {
+                                            crate::appearance::palette(ui.ctx()).muted
+                                        },
+                                    ),
+                                );
+                            }
+                            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        })
+                        .inner
                         .on_hover_text(name)
                         .clicked()
                     {
@@ -1460,7 +1575,7 @@ impl App {
         });
         ui.horizontal_wrapped(|ui| {
             if ui
-                .selectable_label(!self.grid && self.compare.is_none(), "单图 E")
+                .add(egui::Button::new("单图 E").selected(!self.grid && self.compare.is_none()))
                 .on_hover_text("单图浏览（E）")
                 .clicked()
             {
@@ -1468,7 +1583,7 @@ impl App {
                 self.compare = None;
             }
             if ui
-                .selectable_label(self.grid, "网格 G")
+                .add(egui::Button::new("网格 G").selected(self.grid))
                 .on_hover_text("网格浏览（G）")
                 .clicked()
             {
@@ -1561,16 +1676,16 @@ impl App {
             rect,
             5.,
             if i == self.current || self.folder_editor.photos.contains(&i) {
-                Color32::from_rgb(43, 53, 67)
+                crate::appearance::palette(ui.ctx()).selected
             } else {
-                PANEL
+                crate::appearance::palette(ui.ctx()).rail
             },
         );
         if i == self.current {
             painter.rect_stroke(
                 rect.shrink(1.),
                 5.,
-                Stroke::new(1.5, Color32::from_rgb(151, 190, 240)),
+                Stroke::new(2., crate::appearance::palette(ui.ctx()).accent),
                 egui::StrokeKind::Inside,
             );
         }
@@ -1600,7 +1715,7 @@ impl App {
                     "…"
                 },
                 egui::FontId::proportional(13.),
-                Color32::GRAY,
+                crate::appearance::palette(ui.ctx()).muted,
             );
         }
         if self.photos[i].values.flag.as_deref() == Some("reject") {
@@ -1625,7 +1740,7 @@ impl App {
             egui::Align2::LEFT_TOP,
             format!("{flag}{stars}"),
             egui::FontId::proportional(11.),
-            Color32::LIGHT_GRAY,
+            crate::appearance::palette(ui.ctx()).text,
         );
         if let Some((_, color)) = COLORS.iter().find(|(l, _)| {
             photo
@@ -1653,7 +1768,7 @@ impl App {
                 egui::Align2::LEFT_TOP,
                 name,
                 egui::FontId::proportional(12.),
-                Color32::LIGHT_GRAY,
+                crate::appearance::palette(ui.ctx()).text,
             );
         }
         if response.clicked() {
@@ -1680,7 +1795,7 @@ impl App {
                 egui::Align2::CENTER_TOP,
                 "移动中",
                 egui::FontId::proportional(12.),
-                Color32::LIGHT_BLUE,
+                crate::appearance::palette(ui.ctx()).accent,
             );
         }
     }
@@ -1692,6 +1807,11 @@ impl App {
             .and_then(|value| value.parse::<f32>().ok())
             .unwrap_or(94.);
         egui::TopBottomPanel::bottom("film")
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::appearance::palette(ctx).panel)
+                    .inner_margin(egui::Margin::symmetric(10, 7)),
+            )
             .resizable(true)
             .default_height(initial_height)
             .height_range(76. ..=(ctx.content_rect().height() * 0.35).clamp(94., 260.))
@@ -1822,6 +1942,7 @@ impl App {
             .size()
     }
     fn begin_crop(&mut self) {
+        self.pending_focus = None;
         if self.visible.is_empty() || !self.photos[self.current].loaded || self.moving(self.current)
         {
             return;
@@ -1907,6 +2028,7 @@ impl App {
         let mut action = Action::None;
         egui::TopBottomPanel::top("crop-title").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
+                crate::appearance::control(ui);
                 ui.strong("裁切照片");
                 ui.label(
                     self.paths[self.current]
@@ -1928,7 +2050,11 @@ impl App {
                 });
             });
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BG).inner_margin(16.))
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::appearance::palette(ctx).canvas)
+                    .inner_margin(16.),
+            )
             .show(ctx, |ui| {
                 let (area, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
@@ -1982,6 +2108,7 @@ impl App {
             return;
         }
         if self.grid {
+            self.pending_focus = None;
             let cols = 6;
             let width = (ui.available_width() / cols as f32 - 4.).max(32.);
             let mut area = egui::ScrollArea::vertical().id_salt("grid");
@@ -2015,7 +2142,7 @@ impl App {
             self.request(self.current, Level::Full);
         }
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0., BG);
+        painter.rect_filled(rect, 0., crate::appearance::palette(ctx).canvas);
         let full = self.full.get(self.current);
         let actual_full = full.is_some();
         let native = self.source_size(self.current, self.zoom);
@@ -2024,6 +2151,11 @@ impl App {
             .or_else(|| self.thumbs.get(self.current))
             .filter(|_| !self.zoom || native.is_some());
         if let Some(t) = texture {
+            self.viewed.insert(self.current);
+            if response.clicked() || response.drag_started() || response.dragged() {
+                self.pending_focus = None;
+            }
+            self.apply_auto_focus(self.current, rect.size(), ctx);
             if self.zoom && response.dragged() {
                 self.move_view(response.drag_delta(), ctx.pixels_per_point());
             }
@@ -2097,7 +2229,7 @@ impl App {
                 egui::Align2::CENTER_CENTER,
                 "正在加载内嵌 JPEG…",
                 egui::FontId::proportional(16.),
-                Color32::LIGHT_GRAY,
+                crate::appearance::palette(ctx).muted,
             );
         }
         if (self.zoom || self.crop_requested) && !actual_full {
@@ -2156,6 +2288,84 @@ impl App {
         let Some(s) = &self.smoke else {
             return;
         };
+        if std::env::var_os("FASTCULL_SETTINGS_SMOKE").is_some() {
+            let step = s.step;
+            if step >= 5 {
+                std::fs::write(s.dir.join("settings-ok.txt"), "Settings menus, first-visit AF positioning, remembered pan and missing-AF fallback passed").unwrap();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            assert!(
+                self.started.elapsed().as_secs() < 45,
+                "settings smoke timeout at {step}"
+            );
+            if s.waiting || s.last.elapsed().as_millis() < 500 {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                return;
+            }
+            if !s.prepared {
+                match step {
+                    0 => {
+                        ctx.set_theme(egui::ThemePreference::Light);
+                        egui::Popup::open_id(ctx, egui::Id::new("culling-settings"));
+                    }
+                    1 => {
+                        ctx.set_theme(egui::ThemePreference::Dark);
+                        egui::Popup::open_id(ctx, egui::Id::new("culling-settings"));
+                    }
+                    2 => {
+                        egui::Popup::close_id(ctx, egui::Id::new("culling-settings"));
+                        ctx.set_theme(egui::ThemePreference::Light);
+                        self.settings.focus_on_unviewed = true;
+                        self.set_zoom(true);
+                        self.pan = Vec2::new(0.05, -0.05);
+                        self.go(1);
+                    }
+                    3 => {
+                        self.move_view(Vec2::new(60., 30.), ctx.pixels_per_point());
+                        let manual = self.pan;
+                        self.go(0);
+                        self.go(1);
+                        assert_eq!(self.pan, manual);
+                        assert!(self.pending_focus.is_none());
+                    }
+                    4 => {
+                        let pan = self.pan;
+                        self.go(2);
+                        assert_eq!(self.pan, pan);
+                    }
+                    _ => unreachable!(),
+                }
+                let s = self.smoke.as_mut().unwrap();
+                s.prepared = true;
+                s.last = Instant::now();
+                ctx.request_repaint();
+                return;
+            }
+            if self.pending_focus.is_some()
+                || !self.photos[self.current].loaded
+                || self.native_size(self.current).is_none()
+            {
+                self.request(self.current, Level::Full);
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                return;
+            }
+            if step == 2 {
+                let unit = Vec2::new(-0.25, 0.25);
+                let shown = self
+                    .displayed_size(self.current, self.native_size(self.current).unwrap())
+                    / ctx.pixels_per_point();
+                let limits = (shown - self.canvas_size).max(Vec2::ZERO) * 0.5 / shown;
+                assert!((self.pan - unit.clamp(-limits, limits)).length() < 0.0001);
+                assert!(!self.focus_overlay.enabled);
+            }
+            if step == 4 {
+                assert_eq!(self.pan, *self.loupe_positions.get(&1).unwrap());
+            }
+            self.smoke.as_mut().unwrap().waiting = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+            return;
+        }
         if std::env::var_os("FASTCULL_CROP_SMOKE").is_some() {
             let step = s.step;
             let waiting = s.waiting;
@@ -2747,7 +2957,7 @@ fn close_confirmation(
                     else if organizing { "同步星级、旗标、颜色、曝光、裁切与旋转，并建立待整理分组。\n实际移动请在 LR 文件夹面板完成，保留原照片记录。" }
                     else { "包含星级、旗标、颜色、曝光、裁切与旋转。\n只同步本次修改的字段，保留其他 LR 显影设置。" })
                     .size(14.)
-                    .color(Color32::from_gray(185)),
+                    .color(crate::appearance::palette(ctx).muted),
             );
             ui.add_space(10.);
             ui.horizontal_wrapped(|ui| {
@@ -2831,6 +3041,7 @@ impl eframe::App for App {
         }
     }
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        crate::appearance::sync_native_theme(ctx);
         self.folder_editor.drop_cursor = None;
         if ctx.input(|i| i.viewport().close_requested())
             && !self.allow_close
@@ -2857,12 +3068,49 @@ impl eframe::App for App {
         self.focus_overlay.shortcut(ctx);
         self.receive_develop();
         self.receive_index();
+        // Start the session editor while the user is still examining the frame.
+        // Its window/device/pipeline initialization is the dominant cold-open
+        // cost; the open itself then reuses the same private stdin pipe.
+        let prewarm_eligible = !self.raw_prewarmed
+            && !self.raw_windows.busy()
+            && self
+                .photos
+                .get(self.current)
+                .is_some_and(|photo| photo.loaded)
+            && self
+                .paths
+                .get(self.current)
+                .is_some_and(|path| crate::raw_editor::supported(path));
+        if prewarm_eligible {
+            let delay = std::env::var("FASTCULL_RAW_PREWARM_DELAY_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(800);
+            let started = *self.raw_prewarm_at.get_or_insert_with(Instant::now);
+            if started.elapsed() >= std::time::Duration::from_millis(delay) {
+                self.raw_prewarmed = true;
+                self.raw_windows.prewarm();
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        } else if !self.raw_prewarmed && !self.raw_windows.busy() {
+            self.raw_prewarm_at = None;
+        }
         if std::env::var_os("FASTCULL_RAW_EDIT_SMOKE_DIR").is_some()
             && !self.raw_smoke_started
             && self.photos[self.current].loaded
         {
-            self.raw_smoke_started = true;
-            self.begin_raw(ctx);
+            let delay = std::env::var("FASTCULL_RAW_SMOKE_DELAY_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0);
+            let started = *self.raw_smoke_at.get_or_insert_with(Instant::now);
+            if started.elapsed() >= std::time::Duration::from_millis(delay) {
+                self.raw_smoke_started = true;
+                self.begin_raw(ctx);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
         }
         self.receive_raw();
         let raw_busy = self.raw_windows.busy();
@@ -2873,7 +3121,7 @@ impl eframe::App for App {
             if ctx.input(|i| i.viewport().close_requested()) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(BG)).show(ctx, |ui| {
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(crate::appearance::palette(ctx).canvas)).show(ctx, |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.label("RAW 编辑中 · 请在独立编辑窗口完成操作\n关闭编辑窗口时自动保存 XMP，之后恢复选片器");
                 });
@@ -2902,7 +3150,7 @@ impl eframe::App for App {
             .resizable(false)
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_rgb(25, 28, 33))
+                    .fill(crate::appearance::palette(ctx).rail)
                     .inner_margin(6.),
             )
             .show(ctx, |ui| {
@@ -2948,7 +3196,7 @@ impl eframe::App for App {
                 }
                 if self.filters.active() {
                     ui.add_space(8.);
-                    ui.colored_label(Color32::LIGHT_BLUE, "已筛选");
+                    ui.colored_label(crate::appearance::palette(ctx).accent, "已筛选");
                 }
                 ui.add_space(6.);
                 let raw_enabled =
@@ -2965,104 +3213,134 @@ impl eframe::App for App {
                 {
                     self.begin_raw(ctx);
                 }
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    let id = egui::Id::new("culling-settings");
+                    let response = navigation_button(
+                        ui,
+                        "设置",
+                        egui::Popup::is_id_open(ctx, id),
+                        NavigationIcon::Settings,
+                    )
+                    .on_hover_text("外观与放大浏览设置");
+                    egui::Popup::menu(&response)
+                        .id(id)
+                        .align(egui::RectAlign::RIGHT_END)
+                        .show(|ui| self.settings.menu(ui));
+                });
             });
         egui::TopBottomPanel::top("hud")
             .frame(
                 egui::Frame::new()
-                    .fill(PANEL)
+                    .fill(crate::appearance::palette(ctx).panel)
                     .inner_margin(egui::Margin::symmetric(16, 10)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if self.session.is_none()
-                        && ui
-                            .button("新窗口")
-                            .on_hover_text("打开另一批照片或文件夹")
-                            .clicked()
-                    {
-                        match std::env::current_exe().and_then(|exe| {
-                            std::process::Command::new(exe)
-                                .stdin(std::process::Stdio::null())
-                                .stdout(std::process::Stdio::null())
-                                .stderr(std::process::Stdio::null())
-                                .spawn()
-                        }) {
-                            Ok(_) => {}
-                            Err(e) => self.error = Some(format!("打开新窗口失败：{e}")),
-                        }
-                    }
-                    ui.label(format!(
-                        "{} / {}（共 {}）",
-                        self.visible
-                            .iter()
-                            .position(|i| *i == self.current)
-                            .map_or(0, |i| i + 1),
-                        self.visible.len(),
-                        self.paths.len()
-                    ));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(ui.available_width(), 48.),
-                            egui::Layout::top_down(egui::Align::RIGHT),
-                            |ui| {
-                                if !self.visible.is_empty() {
-                                    let name = self.paths[self.current]
-                                        .file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy();
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("FastCull").strong().size(16.));
+                            ui.label(
+                                egui::RichText::new("/  选片工作台")
+                                    .color(crate::appearance::palette(ctx).muted)
+                                    .size(12.),
+                            );
+                        });
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} / {} 张  ·  全部 {} 张",
+                                self.visible
+                                    .iter()
+                                    .position(|i| *i == self.current)
+                                    .map_or(0, |i| i + 1),
+                                self.visible.len(),
+                                self.paths.len()
+                            ))
+                            .size(12.)
+                            .color(crate::appearance::palette(ctx).muted),
+                        );
+                    });
+                    ui.add_space(12.);
+                    ui.separator();
+                    let reserved = if self.session.is_none() { 90. } else { 0. };
+                    let width = (ui.available_width() - reserved).max(20.);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(width, 44.),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            if !self.visible.is_empty() {
+                                let name = self.paths[self.current]
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy();
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(name.as_ref()).size(16.).strong(),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text(self.paths[self.current].display().to_string());
+                                if let Some(info) = &self.photos[self.current].info {
+                                    let capture = &info.capture;
+                                    let mut details = Vec::new();
+                                    if let Some(iso) = capture.iso {
+                                        details.push(format!("ISO {iso}"));
+                                    }
+                                    if let Some(aperture) = capture.aperture {
+                                        details.push(format!("f/{aperture:.1}"));
+                                    }
+                                    if let Some(shutter) = capture.shutter.filter(|v| *v > 0.) {
+                                        details.push(if shutter < 1. {
+                                            format!("1/{:.0} s", 1. / shutter)
+                                        } else {
+                                            format!("{shutter:.1} s")
+                                        });
+                                    }
+                                    if let Some(focal) = capture.focal {
+                                        details.push(format!("{focal:.0} mm"));
+                                    }
+                                    let summary = if details.is_empty() {
+                                        "未记录拍摄参数".to_owned()
+                                    } else {
+                                        details.join("  ·  ")
+                                    };
                                     ui.add(
                                         egui::Label::new(
-                                            egui::RichText::new(name.as_ref()).size(17.).strong(),
+                                            egui::RichText::new(summary)
+                                                .size(12.)
+                                                .color(crate::appearance::palette(ctx).muted),
                                         )
                                         .truncate(),
                                     )
-                                    .on_hover_text(self.paths[self.current].display().to_string());
-                                    if let Some(info) = &self.photos[self.current].info {
-                                        let capture = &info.capture;
-                                        let mut details = Vec::new();
-                                        if let Some(iso) = capture.iso {
-                                            details.push(format!("ISO {iso}"));
-                                        }
-                                        if let Some(aperture) = capture.aperture {
-                                            details.push(format!("f/{aperture:.1}"));
-                                        }
-                                        if let Some(shutter) = capture.shutter.filter(|v| *v > 0.) {
-                                            details.push(if shutter < 1. {
-                                                format!("1/{:.0} s", 1. / shutter)
-                                            } else {
-                                                format!("{shutter:.1} s")
-                                            });
-                                        }
-                                        if let Some(focal) = capture.focal {
-                                            details.push(format!("{focal:.0} mm"));
-                                        }
-                                        let summary = if details.is_empty() {
-                                            "未记录拍摄参数".to_owned()
-                                        } else {
-                                            details.join("  ·  ")
-                                        };
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(summary)
-                                                    .size(14.)
-                                                    .color(Color32::from_gray(205)),
-                                            )
-                                            .truncate(),
-                                        )
-                                        .on_hover_text(
-                                            format!(
-                                                "{}\n{}\n{}",
-                                                capture.camera.as_deref().unwrap_or(""),
-                                                capture.lens.as_deref().unwrap_or(""),
-                                                capture.captured_at.as_deref().unwrap_or("")
-                                            ),
-                                        );
-                                    } else {
-                                        ui.weak("正在读取拍摄信息…");
-                                    }
+                                    .on_hover_text(format!(
+                                        "{}\n{}\n{}",
+                                        capture.camera.as_deref().unwrap_or(""),
+                                        capture.lens.as_deref().unwrap_or(""),
+                                        capture.captured_at.as_deref().unwrap_or("")
+                                    ));
+                                } else {
+                                    ui.weak("正在读取拍摄信息…");
                                 }
-                            },
-                        );
+                            }
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.session.is_none()
+                            && ui
+                                .button("新窗口")
+                                .on_hover_text("打开另一批照片或文件夹")
+                                .clicked()
+                        {
+                            match std::env::current_exe().and_then(|exe| {
+                                std::process::Command::new(exe)
+                                    .stdin(std::process::Stdio::null())
+                                    .stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null())
+                                    .spawn()
+                            }) {
+                                Ok(_) => {}
+                                Err(e) => self.error = Some(format!("打开新窗口失败：{e}")),
+                            }
+                        }
                     });
                 });
                 if let Some(e) = &self.error {
@@ -3110,7 +3388,11 @@ impl eframe::App for App {
             egui::SidePanel::left("filters")
                 .default_width(260.)
                 .width_range(220.0..=360.0)
-                .frame(egui::Frame::new().fill(PANEL).inner_margin(12.))
+                .frame(
+                    egui::Frame::new()
+                        .fill(crate::appearance::palette(ctx).panel)
+                        .inner_margin(12.),
+                )
                 .show(ctx, |ui| {
                     if self.folder_editor.open {
                         let height = if self.filter_editor.open {
@@ -3146,7 +3428,7 @@ impl eframe::App for App {
         egui::TopBottomPanel::bottom("toolbar")
             .frame(
                 egui::Frame::new()
-                    .fill(PANEL)
+                    .fill(crate::appearance::palette(ctx).panel)
                     .inner_margin(egui::Margin::symmetric(10, 7)),
             )
             .show(ctx, |ui| self.toolbar(ui));
@@ -3154,7 +3436,11 @@ impl eframe::App for App {
             self.refilter();
         }
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BG).inner_margin(4.))
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::appearance::palette(ctx).canvas)
+                    .inner_margin(4.),
+            )
             .show(ctx, |ui| self.central(ui, ctx));
         if let Some(e) = self.exposure_preview.as_ref().and_then(|p| p.error()) {
             self.error = Some(format!("曝光预览不可用，参数仍可保存：{e}"));
@@ -3332,6 +3618,7 @@ enum NavigationIcon {
     Filter,
     Crop,
     Raw,
+    Settings,
 }
 fn navigation_button(
     ui: &mut egui::Ui,
@@ -3341,20 +3628,17 @@ fn navigation_button(
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(56., 66.), egui::Sense::click());
     let painter = ui.painter();
-    let accent = Color32::from_rgb(131, 183, 255);
-    let color = if selected {
-        accent
-    } else {
-        Color32::from_gray(165)
-    };
+    let palette = crate::appearance::palette(ui.ctx());
+    let accent = palette.accent;
+    let color = if selected { accent } else { palette.muted };
     if selected || response.hovered() {
         painter.rect_filled(
             rect.shrink(2.),
             8.,
             if selected {
-                Color32::from_rgb(39, 55, 76)
+                palette.selected
             } else {
-                Color32::from_rgb(42, 46, 53)
+                palette.hover
             },
         );
     }
@@ -3367,6 +3651,17 @@ fn navigation_button(
     }
     let origin = rect.center_top() + Vec2::new(-11., 13.);
     let points = match icon {
+        NavigationIcon::Settings => {
+            let center = origin + Vec2::splat(11.);
+            painter.circle_stroke(center, 4., Stroke::new(1.6, color));
+            (0..=32)
+                .map(|step| {
+                    let angle = std::f32::consts::TAU * step as f32 / 32.;
+                    let radius = if matches!(step % 4, 1 | 2) { 11. } else { 8.5 };
+                    center + Vec2::angled(angle) * radius
+                })
+                .collect()
+        }
         NavigationIcon::Raw => vec![
             origin + Vec2::new(0., 22.),
             origin + Vec2::new(0., 2.),
@@ -3422,46 +3717,7 @@ fn navigation_button(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 pub(crate) fn configure(ctx: &egui::Context) {
-    ctx.set_theme(egui::Theme::Dark);
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = PANEL;
-    visuals.window_fill = PANEL;
-    visuals.override_text_color = Some(Color32::from_rgb(218, 223, 231));
-    visuals.extreme_bg_color = Color32::from_rgb(25, 28, 33);
-    visuals.selection.bg_fill = Color32::from_rgb(48, 73, 105);
-    visuals.selection.stroke = Stroke::new(1., Color32::from_rgb(169, 205, 255));
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1., Color32::from_rgb(49, 54, 62));
-    visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(42, 47, 55);
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(42, 47, 55);
-    visuals.widgets.inactive.bg_stroke = Stroke::NONE;
-    visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(56, 64, 76);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(56, 64, 76);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1., Color32::from_rgb(96, 124, 164));
-    visuals.widgets.active.bg_fill = Color32::from_rgb(48, 73, 105);
-    for widget in [
-        &mut visuals.widgets.inactive,
-        &mut visuals.widgets.hovered,
-        &mut visuals.widgets.active,
-        &mut visuals.widgets.noninteractive,
-    ] {
-        widget.corner_radius = egui::CornerRadius::same(5);
-    }
-    ctx.set_visuals(visuals);
-    ctx.style_mut(|style| {
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::proportional(14.));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Button, egui::FontId::proportional(13.));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Small, egui::FontId::proportional(12.));
-        style.spacing.item_spacing = Vec2::new(7., 7.);
-        style.spacing.button_padding = Vec2::new(7., 4.);
-        style.spacing.interact_size.y = 26.;
-        style.spacing.indent = 14.;
-    });
+    crate::appearance::configure(ctx);
     if let Some(font) = cjk_font() {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert("cjk".into(), font.clone());
@@ -3565,6 +3821,7 @@ impl eframe::App for Shell {
         }
     }
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        crate::appearance::sync_native_theme(ctx);
         if let Some(app) = &mut self.app {
             app.update(ctx, frame);
             return;
@@ -3592,19 +3849,47 @@ impl eframe::App for Shell {
                 Err(e) => self.error = Some(format!("{e:#}")),
             }
         }
+        egui::TopBottomPanel::top("welcome-header")
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::appearance::palette(ctx).panel)
+                    .inner_margin(egui::Margin::symmetric(24, 14)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("FastCull");
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        crate::appearance::control,
+                    );
+                });
+            });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space((ui.available_height() * 0.30).max(40.));
-                ui.label(egui::RichText::new("FastCull").size(36.).strong());
+                ui.add_space((ui.available_height() * 0.23).max(30.));
+                ui.label(egui::RichText::new("让好照片，脱颖而出").size(32.).strong());
                 ui.add_space(14.);
-                ui.label(egui::RichText::new("快速浏览，专注选片").size(18.));
+                ui.label(
+                    egui::RichText::new("快速浏览、标记与对比，专注每一次选择")
+                        .size(15.)
+                        .color(crate::appearance::palette(ctx).muted),
+                );
                 ui.add_space(30.);
                 if self.receiver.is_some() || self.pending.is_some() || self.app.is_some() {
                     ui.spinner();
                     ui.label("正在整理照片列表…");
                 } else {
                     let size = egui::vec2(180., 44.);
-                    if ui.add_sized(size, egui::Button::new("打开照片")).clicked() {
+                    if ui
+                        .add_sized(
+                            size,
+                            egui::Button::new(
+                                egui::RichText::new("打开照片").color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(49, 102, 211)),
+                        )
+                        .clicked()
+                    {
                         self.load(ctx, None, Vec::new(), Some(false));
                     }
                     ui.add_space(12.);
@@ -5322,6 +5607,144 @@ mod tests {
             app.compare.as_ref().unwrap().views.map(|v| v.pan),
             [anchor; 2]
         );
+    }
+    fn auto_focus_fixture(ctx: &egui::Context) -> App {
+        let cc = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut app = App::new(&cc, ["a.jpg", "b.jpg", "c.jpg"].map(PathBuf::from).into());
+        app.settings.focus_on_unviewed = true;
+        app.zoom = true;
+        for i in 0..3 {
+            app.photos[i].loaded = true;
+            app.photos[i].info = Some(
+                ArwInfo::read(std::path::Path::new("tests/fixtures/preview-3x2.jpg")).unwrap(),
+            );
+            app.photos[i].full_size = Some(Vec2::new(6000., 4000.));
+            app.focus_overlay.insert_fixture(
+                app.paths[i].clone(),
+                fastcull::photo_focus::Info {
+                    source: "fixture",
+                    areas: vec![fastcull::photo_focus::Area {
+                        center: Pos2::new(0.75, 0.25),
+                        size: None,
+                    }],
+                },
+            );
+        }
+        app
+    }
+    #[test]
+    fn auto_focus_only_on_first_zoomed_visit_and_restores_manual_position() {
+        let ctx = egui::Context::default();
+        let mut app = auto_focus_fixture(&ctx);
+        let viewport = Vec2::new(800., 600.);
+        app.canvas_size = viewport;
+        app.pan = Vec2::new(0.1, 0.1);
+        app.next(1);
+        assert_eq!(app.pending_focus, Some(1));
+        app.apply_auto_focus(1, viewport, &ctx);
+        assert_eq!(app.pan, Vec2::new(-0.25, 0.25));
+        assert!(
+            !app.focus_overlay.enabled,
+            "automatic positioning must not force the overlay on"
+        );
+        app.move_view(Vec2::new(300., -200.), ctx.pixels_per_point());
+        let manual = app.pan;
+        app.next(-1);
+        assert_eq!(app.pan, Vec2::new(0.1, 0.1));
+        app.next(1);
+        assert_eq!(app.pending_focus, None);
+        app.apply_auto_focus(1, viewport, &ctx);
+        assert_eq!(app.pan, manual);
+        app.next(1);
+        app.photos[2].values.orientation = Some(6);
+        app.apply_auto_focus(2, viewport, &ctx);
+        assert_eq!(app.pan, Vec2::new(-0.25, -0.25));
+    }
+    #[test]
+    fn auto_focus_respects_disabled_fit_visited_and_grid_navigation() {
+        let ctx = egui::Context::default();
+        for case in 0..4 {
+            let mut app = auto_focus_fixture(&ctx);
+            app.pan = Vec2::new(0.1, 0.2);
+            match case {
+                0 => app.settings.focus_on_unviewed = false,
+                1 => app.zoom = false,
+                2 => {
+                    app.viewed.insert(1);
+                }
+                _ => app.grid = true,
+            }
+            app.next(1);
+            assert_eq!(app.pending_focus, None, "case {case}");
+            app.apply_auto_focus(1, Vec2::new(800., 600.), &ctx);
+            assert_eq!(
+                app.pan,
+                if case == 1 {
+                    Vec2::ZERO
+                } else {
+                    Vec2::new(0.1, 0.2)
+                }
+            );
+        }
+    }
+    #[test]
+    fn auto_focus_waits_for_geometry_cancels_on_input_and_handles_missing_points() {
+        let ctx = egui::Context::default();
+        let mut app = auto_focus_fixture(&ctx);
+        let viewport = Vec2::new(800., 600.);
+        app.canvas_size = viewport;
+        app.next(1);
+        app.photos[1].full_size = None;
+        app.apply_auto_focus(1, viewport, &ctx);
+        assert_eq!(app.pending_focus, Some(1));
+        app.move_view(Vec2::new(20., 0.), 1.);
+        app.photos[1].full_size = Some(Vec2::new(6000., 4000.));
+        app.apply_auto_focus(1, viewport, &ctx);
+        assert_eq!(
+            app.pan,
+            Vec2::ZERO,
+            "late data must not override a manual gesture"
+        );
+        app.next(1);
+        app.next(-1);
+        app.apply_auto_focus(2, viewport, &ctx);
+        assert_eq!(
+            app.pan,
+            Vec2::ZERO,
+            "a stale response must not move a different photo"
+        );
+        app.focus_overlay
+            .insert_fixture(app.paths[2].clone(), Default::default());
+        app.viewed.remove(&2);
+        app.loupe_positions.remove(&2);
+        app.next(1);
+        app.pan = Vec2::new(0.1, -0.1);
+        app.apply_auto_focus(2, viewport, &ctx);
+        assert_eq!(app.pan, Vec2::new(0.1, -0.1));
+        assert_eq!(app.pending_focus, None);
+    }
+    #[test]
+    fn auto_focus_compare_centers_only_the_new_candidate_and_clamps_to_photo_edges() {
+        let ctx = egui::Context::default();
+        let mut app = auto_focus_fixture(&ctx);
+        let reference = Vec2::new(0.1, 0.2);
+        app.compare = Some(Compare {
+            indices: [0, 1],
+            views: [View {
+                zoom: 1.,
+                pan: reference,
+            }; 2],
+            active: 1,
+            linked: true,
+        });
+        app.current = 1;
+        app.go(2);
+        app.photos[2].full_size = Some(Vec2::new(1000., 800.));
+        app.apply_auto_focus(2, Vec2::new(800., 600.), &ctx);
+        let c = app.compare.as_ref().unwrap();
+        assert_eq!(c.views[0].pan, reference);
+        assert_eq!(c.views[1].pan, Vec2::new(-0.1, 0.125));
+        assert_eq!(c.views.map(|v| v.zoom), [1., 1.]);
     }
     #[test]
     fn rotation_returns_to_original() {

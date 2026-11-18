@@ -33,7 +33,7 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag and Cargo version differ' }
           rustup toolchain install 1.90.0 --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
           if ($LASTEXITCODE) { throw 'Rust installation failed' }
-          python -m pip install lupa pillow
+          python -m pip install lupa pillow numpy opencv-python-headless
           if ($LASTEXITCODE) { throw 'Test dependency installation failed' }
           if (!(Test-Path "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe")) {
             choco install innosetup --yes --no-progress

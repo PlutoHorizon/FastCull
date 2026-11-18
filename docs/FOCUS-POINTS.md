@@ -18,6 +18,14 @@
 
 解析器使用定位读取，预算 2 MiB；限制目录数量、条目数量、坐标数量和长度。原始图像数据不会因读取对焦信息而解码。
 
+## 100% 切图时自动定位
+
+选片工作台左侧边栏底部的“设置”菜单提供“100% 切图时自动定位对焦点”，默认关闭，修改后自动保存。颜色外观（浅色、深色、跟随系统）也在此菜单中。
+
+开启后，在单图 100% 或对比画面恰为 100% 时切到本次尚未浏览的照片，会将可见对焦点的中心移到画布中央；多个点取裁切范围内各点中心的平均位置，靠近照片边缘时限制移动以避免留白。对比视图只定位新切换的画面，参考照片保留原位。未记录、暂不支持或对焦点全部位于裁切外时，沿用切换前的位置。
+
+本次已在单图或对比画面浏览的照片不再触发自动定位；网格缩略图和后台预读不计为浏览。已保存的每张照片放大位置优先恢复，浏览记录随本次选片窗口结束而清空。手动拖动、切换倍率或进入裁切会取消尚未完成的定位。此功能无需开启“对焦点”叠加显示，也不写入照片或旁车文件。
+
 标签依据：[ExifTool Sony](https://github.com/exiftool/exiftool/blob/master/lib/Image/ExifTool/Sony.pm)、[Nikon](https://github.com/exiftool/exiftool/blob/master/lib/Image/ExifTool/Nikon.pm)、[Canon](https://github.com/exiftool/exiftool/blob/master/lib/Image/ExifTool/Canon.pm)。本地实现为只读 Rust 解析器。
 
 维护验证入口：`cargo test photo_focus`、`cargo test --bin fastcull raw_view::tests`、`cargo test --bin fastcull raw_canvas_single_click`。`cargo run --example focus_probe -- <照片路径>` 可只读输出实际记录。

@@ -388,7 +388,7 @@ impl Editor {
             }
         }
         if let Some(error) = &self.error {
-            ui.colored_label(Color32::LIGHT_RED, error);
+            ui.colored_label(ui.visuals().error_fg_color, error);
         }
         changed
     }
@@ -476,12 +476,12 @@ impl Editor {
         painter.rect_filled(
             egui::Rect::from_min_size(icon - Vec2::new(0., 3.), Vec2::new(7., 4.)),
             1.,
-            Color32::from_gray(150),
+            crate::appearance::palette(ui.ctx()).muted,
         );
         painter.rect_filled(
             egui::Rect::from_min_size(icon, Vec2::new(14., 9.)),
             1.,
-            Color32::from_gray(175),
+            crate::appearance::palette(ui.ctx()).muted,
         );
         let mut job = egui::text::LayoutJob::simple(
             label,
@@ -658,7 +658,7 @@ impl Editor {
                     if ui.button("返回").clicked() { close = true; }
                 }
             }
-            if let Some(e) = &self.error { ui.colored_label(Color32::LIGHT_RED, e); }
+            if let Some(e) = &self.error { ui.colored_label(ui.visuals().error_fg_color, e); }
         });
         if !close {
             self.dialog = Some(dialog);

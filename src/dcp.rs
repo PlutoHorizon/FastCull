@@ -98,7 +98,11 @@ impl HsvMap {
                 fs,
             )
         };
-        lerp(layer(v0), layer(v1), fv)
+        if nv == 1 {
+            layer(0)
+        } else {
+            lerp(layer(v0), layer(v1), fv)
+        }
     }
     pub fn apply(&self, rgb: [f32; 3]) -> [f32; 3] {
         if !rgb.iter().all(|x| x.is_finite()) {
@@ -721,6 +725,10 @@ fn illuminant_temperature(code: f64) -> Result<f64> {
     })
 }
 pub fn read(path: &Path) -> Result<Profile> {
+    static CACHE: crate::raw_profile_cache::Cache<Profile> = crate::raw_profile_cache::Cache::new();
+    CACHE.read(path, || read_uncached(path))
+}
+fn read_uncached(path: &Path) -> Result<Profile> {
     let metadata = fs::metadata(path).with_context(|| format!("读取 DCP：{}", path.display()))?;
     ensure!(
         metadata.is_file() && metadata.len() <= MAX_FILE,

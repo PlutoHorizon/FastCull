@@ -5,7 +5,7 @@
     var scriptFolder = new File($.fileName).parent;
     var api = {};
     api.isMac = /mac/i.test($.os || "");
-    api.version = "2.10.0";
+    api.version = "2.11.0";
     // Capture roots only; recursive enumeration belongs to the detached Rust
     // process, never to Bridge's menu display callback or metadata API.
     api.collect = function (selected) {

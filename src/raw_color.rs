@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use eframe::egui::Vec2;
 
-pub const PIPELINE_VERSION: &str = "scene-prophoto-v3-enhanced-area";
+pub const PIPELINE_VERSION: &str = "scene-prophoto-v7-display-hsm";
 pub const PROPHOTO_TO_XYZ: Matrix = [
     [0.7976749, 0.1351917, 0.0313534],
     [0.2880402, 0.7118741, 0.0000857],
@@ -29,9 +29,14 @@ pub struct Recipe {
     pub baseline_exposure: f32,
 }
 pub struct Frame {
+    #[cfg(any(windows, target_os = "macos"))]
+    pub resident: Option<crate::raw_compute::Scene>,
     pub size: [usize; 2],
     pub pixels: Vec<[f32; 4]>,
     pub recipe: Recipe,
+    /// Apply per source texel before display interpolation, exposure and Look.
+    /// Deferred full frames must be materialized before exporting a CPU bitmap.
+    pub pending_hue_sat: Option<HsvMap>,
     pub grey: GreySampler,
     pub temperature: Option<f64>,
     pub tint: Option<f64>,
@@ -41,6 +46,42 @@ pub struct Frame {
     pub make: String,
     pub model: String,
     pub requested_profile: String,
+}
+impl Frame {
+    pub fn materialize_hue_sat(&mut self, cancelled: &(dyn Fn() -> bool + Sync)) -> Result<()> {
+        #[cfg(any(windows, target_os = "macos"))]
+        if let Some(scene) = &self.resident {
+            ensure!(!cancelled(), "已取消 GPU 场景导出");
+            let pixels = scene.read_pixels()?;
+            ensure!(!cancelled(), "已取消 GPU 场景导出");
+            self.pixels = pixels;
+            self.resident = None;
+        }
+        let Some(map) = &self.pending_hue_sat else {
+            return Ok(());
+        };
+        let mut pixels = self.pixels.clone();
+        crate::raw_parallel::rows(&mut pixels, self.size[0], |_, row| {
+            ensure!(!cancelled(), "已取消颜色校正");
+            for p in row {
+                let rgb = map.apply([p[0], p[1], p[2]]);
+                ensure!(
+                    rgb.iter().all(|v| v.is_finite() && v.abs() < 65504.),
+                    "颜色校正超出浮点范围"
+                );
+                *p = [rgb[0], rgb[1], rgb[2], p[3]];
+            }
+            Ok(())
+        })?;
+        ensure!(!cancelled(), "已取消颜色校正");
+        self.pixels = pixels;
+        self.pending_hue_sat = None;
+        Ok(())
+    }
+}
+/// Validate a display frame before handing it to the graphics API.
+pub fn finite_pixels(pixels: &[[f32; 4]]) -> bool {
+    crate::raw_parallel::all(pixels, |p| p.iter().all(|v| v.is_finite()))
 }
 /// Source-camera samples, before HSM, Look, exposure, tone or display encoding.
 #[derive(Clone)]
@@ -205,13 +246,13 @@ pub fn find_profile_for_source(
 }
 pub fn prepare_from_path(
     path: &std::path::Path,
-    source: LinearDeveloped,
+    source: std::sync::Arc<LinearDeveloped>,
     values: &Values,
     max_edge: u32,
-    cancelled: &dyn Fn() -> bool,
+    cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Frame> {
     let profile = find_profile_for_source(path, &source.make, &source.model, values)?;
-    prepare_using_profile(source, values, max_edge, profile, cancelled)
+    prepare_shared(source, values, max_edge, profile, cancelled)
 }
 pub fn requested_profile(values: &Values) -> &str {
     values
@@ -255,18 +296,33 @@ pub fn prepare(
     source: LinearDeveloped,
     values: &Values,
     max_edge: u32,
-    cancelled: &dyn Fn() -> bool,
+    cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Frame> {
     let name = requested_profile(values).to_string();
     let profile = find_profile(&source.make, &source.model, &name)?;
     prepare_using_profile(source, values, max_edge, profile, cancelled)
 }
 pub fn prepare_using_profile(
-    mut source: LinearDeveloped,
+    source: LinearDeveloped,
+    values: &Values,
+    max_edge: u32,
+    profile: Option<Profile>,
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Result<Frame> {
+    prepare_shared(
+        std::sync::Arc::new(source),
+        values,
+        max_edge,
+        profile,
+        cancelled,
+    )
+}
+fn prepare_shared(
+    source: std::sync::Arc<LinearDeveloped>,
     values: &Values,
     max_edge: u32,
     mut profile: Option<Profile>,
-    cancelled: &dyn Fn() -> bool,
+    cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Frame> {
     if let Some(profile) = &mut profile {
         // Normalize the two calibrations before interpolation; a relative
@@ -515,80 +571,163 @@ pub fn prepare_using_profile(
     ensure!(count <= 160_000_000, "线性预览超出像素限制");
     // Integrate the sensor footprint before geometric sampling. Four-point
     // point sampling aliases fine colour/noise when a RAW is reduced severalfold.
-    if scale < 0.75 {
+    let (mut camera_rgb, width, height) = if scale < 0.75 {
         let reduced = [
             (source.width as f32 * scale).ceil().max(1.) as usize,
             (source.height as f32 * scale).ceil().max(1.) as usize,
         ];
-        source.rgb = area_reduce(
+        let reduced_rgb = area_reduce(
             &source.rgb,
             [source.width, source.height],
             reduced,
             cancelled,
         )?;
-        source.width = reduced[0];
-        source.height = reduced[1];
-    }
-    let direct = !crop.enabled && orientation == 1 && output == [source.width, source.height];
-    let mut pixels = Vec::new();
-    pixels.try_reserve_exact(count)?;
-    for y in 0..output[1] {
-        if y % 32 == 0 {
-            ensure!(!cancelled(), "线性显影已取消");
-        }
-        let fy = (y as f32 + 0.5) / output[1] as f32;
-        let left = uvs[0].lerp(uvs[3], fy);
-        let right = uvs[1].lerp(uvs[2], fy);
-        for x in 0..output[0] {
-            let rgb = if direct {
-                source.rgb[y * source.width + x]
-            } else {
-                let p = left.lerp(right, (x as f32 + 0.5) / output[0] as f32);
-                let sx = (p.x * source.width as f32 - 0.5).clamp(0., (source.width - 1) as f32);
-                let sy = (p.y * source.height as f32 - 0.5).clamp(0., (source.height - 1) as f32);
-                let (x0, y0) = (sx as usize, sy as usize);
-                let (x1, y1) = (
-                    (x0 + 1).min(source.width - 1),
-                    (y0 + 1).min(source.height - 1),
-                );
-                let (dx, dy) = (sx - x0 as f32, sy - y0 as f32);
-                std::array::from_fn(|c| {
-                    (source.rgb[y0 * source.width + x0][c] * (1. - dx)
-                        + source.rgb[y0 * source.width + x1][c] * dx)
-                        * (1. - dy)
-                        + (source.rgb[y1 * source.width + x0][c] * (1. - dx)
-                            + source.rgb[y1 * source.width + x1][c] * dx)
-                            * dy
-                })
-            };
-            let mut out = wb::apply(
+        (std::borrow::Cow::Owned(reduced_rgb), reduced[0], reduced[1])
+    } else {
+        (
+            std::borrow::Cow::Borrowed(source.rgb.as_slice()),
+            source.width,
+            source.height,
+        )
+    };
+    let noise = values.color_noise_reduction.unwrap_or(25);
+    let direct = !crop.enabled && orientation == 1 && output == [width, height];
+    // Full frames are already displayed by a GPU. Avoid evaluating a nonlinear
+    // camera table for every off-screen pixel; the fragment shader applies it
+    // to each source texel before interpolation, preserving the processing order.
+    #[cfg(any(windows, target_os = "macos"))]
+    let defer = max_edge == 0
+        && count >= 4_000_000
+        && crate::raw_compute::display_hue_sat_enabled()
+        && hsm.as_ref().is_some_and(|m| {
+            m.dims.iter().all(|v| *v <= 256)
+                && (m.encoding == dcp::Encoding::Linear || m.dims[2] == 1)
+                && m.data.iter().all(|p| p[2] <= 4.)
+        });
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let defer = false;
+    let pending_hue_sat = if defer { hsm.take() } else { None };
+    let safe_scale = pending_hue_sat
+        .as_ref()
+        .map_or(1., |m| m.data.iter().map(|v| v[2]).fold(1_f32, f32::max));
+    #[cfg(any(windows, target_os = "macos"))]
+    let resident = if max_edge == 0 && count <= 60_000_000 && hsm.is_none() {
+        crate::raw_compute::try_scene(
+            &camera_rgb,
+            width,
+            noise,
+            &crate::raw_compute::SceneParameters {
+                output,
+                uvs: uvs.map(|p| [p.x, p.y]),
                 matrix,
-                std::array::from_fn(|i| f64::from(rgb[i]) * correction[i]),
-            )
-            .map(|x| x as f32);
-            if let Some(map) = &hsm {
-                out = map.apply(out);
+                correction,
+                limit: 65504. / safe_scale,
+                direct,
+            },
+            cancelled,
+        )?
+    } else {
+        None
+    };
+    #[cfg(any(windows, target_os = "macos"))]
+    let on_gpu = resident.is_some();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let on_gpu = false;
+    let geometry_started = std::time::Instant::now();
+    let mut pixels: Vec<[f32; 4]> = Vec::new();
+    if !on_gpu {
+        if noise != 0 {
+            #[cfg(any(windows, target_os = "macos"))]
+            let accelerated = crate::raw_compute::try_reduce(&camera_rgb, width, noise, cancelled)?;
+            #[cfg(not(any(windows, target_os = "macos")))]
+            let accelerated: Option<Vec<[f32; 3]>> = None;
+            if let Some(rgb) = accelerated {
+                camera_rgb = std::borrow::Cow::Owned(rgb);
+            } else {
+                crate::raw_chroma::reduce(camera_rgb.to_mut(), width, noise, cancelled)?;
             }
-            ensure!(
-                out.iter().all(|x| x.is_finite() && x.abs() < 65504.),
-                "显影结果超出浮点显示范围"
-            );
-            pixels.push([out[0], out[1], out[2], 1.]);
+        }
+        pixels.try_reserve_exact(count)?;
+        // Portrait rotation walks source columns. Visit small output tiles so those
+        // source columns remain in cache; retain the exact original sampling math.
+        crate::raw_parallel::bands(
+            &mut pixels.spare_capacity_mut()[..count],
+            output[0],
+            32,
+            |first_y, band| {
+                ensure!(!cancelled(), "线性显影已取消");
+                for first_x in (0..output[0]).step_by(32) {
+                    for (by, row) in band.chunks_mut(output[0]).enumerate() {
+                        let y = first_y + by;
+                        let fy = (y as f32 + 0.5) / output[1] as f32;
+                        let left = uvs[0].lerp(uvs[3], fy);
+                        let right = uvs[1].lerp(uvs[2], fy);
+                        for (x, pixel) in row.iter_mut().enumerate().skip(first_x).take(32) {
+                            let rgb = if direct {
+                                camera_rgb[y * width + x]
+                            } else {
+                                let p = left.lerp(right, (x as f32 + 0.5) / output[0] as f32);
+                                let sx = (p.x * width as f32 - 0.5).clamp(0., (width - 1) as f32);
+                                let sy = (p.y * height as f32 - 0.5).clamp(0., (height - 1) as f32);
+                                let (x0, y0) = (sx as usize, sy as usize);
+                                let (x1, y1) = ((x0 + 1).min(width - 1), (y0 + 1).min(height - 1));
+                                let (dx, dy) = (sx - x0 as f32, sy - y0 as f32);
+                                std::array::from_fn(|c| {
+                                    (camera_rgb[y0 * width + x0][c] * (1. - dx)
+                                        + camera_rgb[y0 * width + x1][c] * dx)
+                                        * (1. - dy)
+                                        + (camera_rgb[y1 * width + x0][c] * (1. - dx)
+                                            + camera_rgb[y1 * width + x1][c] * dx)
+                                            * dy
+                                })
+                            };
+                            let mut out = wb::apply(
+                                matrix,
+                                std::array::from_fn(|i| f64::from(rgb[i]) * correction[i]),
+                            )
+                            .map(|x| x as f32);
+                            if let Some(map) = &hsm {
+                                out = map.apply(out);
+                            }
+                            ensure!(
+                                out.iter()
+                                    .all(|x| x.is_finite() && x.abs() < 65504. / safe_scale),
+                                "显影结果超出浮点显示范围"
+                            );
+                            pixel.write([out[0], out[1], out[2], 1.]);
+                        }
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        // Every output element has been initialized above; errors leave length 0.
+        unsafe {
+            pixels.set_len(count);
         }
     }
-    source.rgb.clear();
+    log::info!(
+        "RAW color geometry_ms={:.3} orientation={orientation} pixels={count}",
+        geometry_started.elapsed().as_secs_f64() * 1000.
+    );
+    if let Some(map) = &pending_hue_sat {
+        log::info!("RAW display deferred hue-sat dims={:?}", map.dims);
+    }
     Ok(Frame {
+        #[cfg(any(windows, target_os = "macos"))]
+        resident,
         size: output,
         pixels,
         recipe,
+        pending_hue_sat,
         grey,
         temperature: white_known.then_some(temperature),
         tint: white_known.then_some(tint),
         profile: profile_name,
         warning,
         profile_fingerprint: fingerprint,
-        make: source.make,
-        model: source.model,
+        make: source.make.clone(),
+        model: source.model.clone(),
         requested_profile: name,
     })
 }
@@ -597,7 +736,7 @@ fn area_reduce(
     pixels: &[[f32; 3]],
     size: [usize; 2],
     target: [usize; 2],
-    cancelled: &dyn Fn() -> bool,
+    cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Vec<[f32; 3]>> {
     ensure!(
         size[0].checked_mul(size[1]) == Some(pixels.len())
@@ -610,14 +749,14 @@ fn area_reduce(
         size[0] as f64 / target[0] as f64,
         size[1] as f64 / target[1] as f64,
     ];
-    let mut out = Vec::with_capacity(target[0] * target[1]);
-    for y in 0..target[1] {
+    let mut out = vec![[0.; 3]; target[0] * target[1]];
+    crate::raw_parallel::rows(&mut out, target[0], |y, row| {
         if y % 16 == 0 {
             ensure!(!cancelled(), "线性缩放已取消");
         }
         let y0 = y as f64 * step[1];
         let y1 = (y + 1) as f64 * step[1];
-        for x in 0..target[0] {
+        for (x, pixel) in row.iter_mut().enumerate() {
             let x0 = x as f64 * step[0];
             let x1 = (x + 1) as f64 * step[0];
             let mut sum = [0f64; 3];
@@ -630,9 +769,10 @@ fn area_reduce(
                     }
                 }
             }
-            out.push(sum.map(|v| (v / (step[0] * step[1])) as f32));
+            *pixel = sum.map(|v| (v / (step[0] * step[1])) as f32);
         }
-    }
+        Ok(())
+    })?;
     Ok(out)
 }
 
@@ -699,6 +839,51 @@ mod tests {
             open_ms: 0.,
             unpack_ms: 0.,
             process_ms: 0.,
+        }
+    }
+    #[test]
+    fn scene_default_reduces_chroma_noise_without_blurring_luminance() {
+        let mut source = fixture();
+        source.width = 48;
+        source.height = 32;
+        source.rgb = (0..48 * 32)
+            .map(|i| {
+                let y = if i % 48 < 24 { 0.1 } else { 0.5 };
+                let noise = if (i * 17 + i / 48 * 13) % 7 < 3 {
+                    -0.02
+                } else {
+                    0.02
+                };
+                [y + noise, y - noise, y + noise]
+            })
+            .collect();
+        let frame = prepare_using_profile(source, &Values::default(), 0, None, &|| false).unwrap();
+        // Back to linear sRGB: inspect chroma on a constant-luminance patch.
+        let inv = wb::inverse(wb::mul(
+            wb::mul(
+                wb::inverse(PROPHOTO_TO_XYZ).unwrap(),
+                wb::adapt(wb::D65, wb::D50).unwrap(),
+            ),
+            SRGB_TO_XYZ,
+        ))
+        .unwrap();
+        let rgb: Vec<_> = frame
+            .pixels
+            .iter()
+            .map(|p| wb::apply(inv, [p[0] as f64, p[1] as f64, p[2] as f64]))
+            .collect();
+        let chroma: f64 = (4..28)
+            .flat_map(|y| (4..20).map(move |x| y * 48 + x))
+            .map(|i| (rgb[i][0] - rgb[i][1]).abs())
+            .sum::<f64>()
+            / (24. * 16.);
+        assert!(chroma < 0.015, "unfiltered chroma {chroma}");
+        for (i, p) in rgb.iter().enumerate() {
+            let expected = if i % 48 < 24 { 0.1 } else { 0.5 };
+            assert!(
+                ((p[0] + 2. * p[1] + p[2]) * 0.25 - expected).abs() < 1e-5,
+                "luminance edge blurred at {i}"
+            );
         }
     }
     #[test]

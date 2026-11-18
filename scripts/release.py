@@ -17,7 +17,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'lrplugins/FastCull.lrplugin'
-BINARIES = ['fastcull.exe', 'fastcull-keys.exe', 'fastcull_raw.dll']
+BINARIES = ['fastcull.exe', 'fastcull-keys.exe', 'fastcull_raw.dll', 'vcomp140.dll']
 PLUGIN_SUPPORT = ['LICENSE', 'THIRD-PARTY-NOTICES.txt']
 LUA = ['Info.lua', 'common.lua', 'develop.lua', 'raw_settings.lua', 'HotkeyInit.lua', 'HotkeyStop.lua',
        'OpenCuller.lua', 'organization.lua', 'PluginInfo.lua', 'sync.lua', 'photo_edits.lua',
@@ -29,6 +29,7 @@ SOURCE_FILES = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'rust-toolchain.toml', '
                 '.github/workflows/macos-build.yml',
                 'installer/FastCull.iss', 'docs/DISTRIBUTION.md', 'docs/RELEASE-NOTES.md',
                 'docs/QUICKSTART.txt', 'docs/CROPPING.md', 'docs/LR-SYNC.md', 'docs/MACOS.md',
+                'docs/MAC-PERFORMANCE-2026-11-10.md', 'docs/macos-performance-2026-11-10.json',
                 'docs/RAW-EDITING.md', 'docs/DNG.md', 'docs/COLOR-PIPELINE.md',
                 'docs/FOCUS-POINTS.md',
                 'docs/diagnostics/BRIDGE-STARTUP-2026-11-06.md',
@@ -56,7 +57,9 @@ SOURCE_FILES = ['Cargo.toml', 'Cargo.lock', 'build.rs', 'rust-toolchain.toml', '
 SOURCE_SCRIPTS = ['build-release.ps1', 'build-native.ps1', 'build-icons.py', 'release.py', 'bridge_startup_report.py', 'adobe-raw-render.ps1',
                   'register-integrations.ps1', 'register-adobe.cmd', 'unregister-adobe.cmd',
                   'analyze_startup.py', 'verify_feature_images.py', 'native_smoke.py', 'crop_smoke.py',
-                  'install-bridge.ps1', 'verify_samples.py', 'build-macos.py', 'install-macos.command']
+                  'install-bridge.ps1', 'verify_samples.py', 'build-macos.py', 'install-macos.command',
+                  'acr_reference_manifest.py', 'raw_bench.py', 'raw_native_dispatch_check.py',
+                  'raw_recipe_check.py', 'raw_reference_eval.py', 'raw_sensor_check.py']
 
 
 def sha(path):
@@ -89,11 +92,18 @@ def notices(registry, version):
         chunks.append('\n===== LibRaw 0.22.2 =====\nhttps://www.libraw.org/\n'
                       'Linked under the CDDL 1.0 license option. Complete unmodified upstream source is in vendor/LibRaw-0.22.2.zip.\n'
                       'Adapter source: native/raw_bridge.cpp and native/jpeg_scaled.cpp. Rebuild: scripts/build-native.ps1.\n')
+        chunks.append('FastCull GPU AHD: src/raw_ahd.wgsl adapts LibRaw AHD under CDDL 1.0.\n'
+                      'Copyright 2019-2025 LibRaw LLC; dcraw copyright 1997-2018 Dave Coffin.\n'
+                      'GPU adaptation copyright 2026 FastCull contributors; modified source included in source distribution.\n')
         for name in ['LICENSE.CDDL', 'LICENSE.LGPL', 'COPYRIGHT']:
             chunks.append(sdk.read('LibRaw-0.22.2/'+name).decode('utf-8', errors='replace'))
     chunks.append('\n===== Adobe DNG SDK classic SDR numeric reference =====\n'
                   'Copyright 2006-2023 Adobe Systems Incorporated. All Rights Reserved.\n'
                   + (ROOT/'vendor/ADOBE-DNG-SDK-LICENSE.txt').read_text(encoding='utf-8'))
+    chunks.append('\n===== Microsoft Visual C++ OpenMP runtime =====\n'
+                  'vcomp140.dll, copyright Microsoft Corporation. All rights reserved.\n'
+                  'Redistributable x64 OpenMP runtime supplied with Microsoft Visual Studio.\n'
+                  'Required by the Windows LibRaw build; bundled beside fastcull_raw.dll.\n')
     return '\n'.join(chunks), len(found)
 
 
@@ -145,7 +155,7 @@ def main():
     for name in BINARIES+LUA:
         copy(PLUGIN/name, payload/'FastCull.lrplugin'/name)
     for path in ['bridge/FastCull.jsx', 'scripts/register-integrations.ps1', 'scripts/build-native.ps1',
-                 'native/raw_bridge.cpp', 'native/jpeg_scaled.cpp', 'native/white_balance.h',
+                 'native/raw_bridge.cpp', 'native/sensor_checkpoint.h', 'native/jpeg_scaled.cpp', 'native/white_balance.h',
                  'native/white_balance_table.inc', 'vendor/LibRaw-0.22.2.zip', 'LICENSE', 'README.md',
                  'docs/RAW-EDITING.md', 'docs/DNG.md', 'docs/MACOS.md', 'docs/FOCUS-POINTS.md',
                  'docs/COLOR-PIPELINE.md', 'docs/raw-color-calibration-validation-2026-10-30.json',

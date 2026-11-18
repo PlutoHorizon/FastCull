@@ -112,7 +112,7 @@ impl Editor {
             }
         });
         if let Some(error) = &self.error {
-            ui.colored_label(egui::Color32::LIGHT_RED, error);
+            ui.colored_label(ui.visuals().error_fg_color, error);
             ui.label("输入无效时保留上一次有效条件");
         }
         for field in Field::ALL {

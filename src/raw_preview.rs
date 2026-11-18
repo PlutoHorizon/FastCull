@@ -12,6 +12,38 @@ pub struct HsvLookup {
 fn valid_curve(curve: &[f32]) -> bool {
     curve.len() >= 2 && curve.len() <= 65536 && curve.iter().all(|v| v.is_finite())
 }
+/// Provisional GPU WB while the sensor/DCP update is running. Final frames
+/// replace this gain with identity; no approximate gain is saved in the XMP.
+pub fn white_balance_preview(from: Option<(f64, f64)>, to: Option<(f64, f64)>) -> [f32; 3] {
+    let calculate = || -> Option<[f32; 3]> {
+        let (from, to) = (from?, to?);
+        let inverse = fastcull::white_balance::inverse(fastcull::raw_color::PROPHOTO_TO_XYZ)?;
+        let a =
+            fastcull::white_balance::apply(inverse, fastcull::white_balance::xyz(from.0, from.1)?);
+        let b = fastcull::white_balance::apply(inverse, fastcull::white_balance::xyz(to.0, to.1)?);
+        if !a.iter().chain(b.iter()).all(|v| v.is_finite() && *v > 0.) {
+            return None;
+        }
+        let gain = std::array::from_fn::<_, 3, _>(|c| a[c] / b[c]);
+        Some(gain.map(|v| (v / gain[1]).clamp(0.125, 8.) as f32))
+    };
+    calculate().unwrap_or([1.; 3])
+}
+#[cfg(test)]
+mod wb_latency_tests {
+    use super::*;
+    #[test]
+    fn gpu_wb_moves_immediately_and_final_frame_removes_provisional_gain() {
+        let start = Some((5500., 0.));
+        let desired = Some((8500., 10.));
+        let gain = white_balance_preview(start, desired);
+        assert!(gain[0] > 1. && gain[2] < 1.);
+        assert_eq!(gain[1], 1.);
+        assert_eq!(white_balance_preview(desired, desired), [1.; 3]);
+        assert_eq!(white_balance_preview(None, desired), [1.; 3]);
+        assert_eq!(white_balance_preview(start, Some((f64::NAN, 0.))), [1.; 3]);
+    }
+}
 fn valid_lookup(map: &HsvLookup) -> bool {
     lookup_dimensions_valid(map) && map.data.iter().flatten().all(|v| v.is_finite())
 }
@@ -118,8 +150,8 @@ fn look_up(map: &HsvLookup, rgb: [f32; 3]) -> [f32; 3] {
     hsv_rgb(hsv)
 }
 fn curve_value(v: f32, curve: &[f32]) -> f32 {
-    // SDR clipping occurs after exposure, so a negative EV can still recover
-    // scene values above one. Do not insert a second, non-profile shoulder.
+    // Scene headroom is mapped before the profile curve. Negative exposure
+    // still recovers the original floating-point samples above one.
     let v = v.clamp(0., 1.);
     if curve.len() < 2 {
         return v;
@@ -129,9 +161,25 @@ fn curve_value(v: f32, curve: &[f32]) -> f32 {
     let j = (i + 1).min(curve.len() - 1);
     curve[i] + (curve[j] - curve[i]) * x.fract()
 }
+/// SDR highlight headroom for positive user exposure, independent of the DCP
+/// baseline. Keep the lower half of the linear range unchanged, allocate half
+/// of the added stops to the shoulder, and let positive Whites release it.
+/// This is our display policy, not Adobe's proprietary ProcessVersion model.
+fn highlight_rolloff(settings: Settings) -> f32 {
+    let stops = settings.exposure.clamp(0., 20.) * 0.5 * (1. - settings.basic[3].clamp(0., 1.));
+    2. - 1. / (2f32.powf(stops) - 0.5)
+}
+fn rolloff_value(value: f32, amount: f32) -> f32 {
+    if amount <= 0. || value <= 0.5 {
+        return value;
+    }
+    let above = value - 0.5;
+    0.5 + above / (1. + amount * above)
+}
 /// CPU reference for the GPU scene shaders, histogram and pixel validation.
 /// The input is linear ProPhoto/D50; exposure is absolute, not a display delta.
 pub fn evaluate_scene(rgb: [f32; 3], settings: Settings, recipe: &Recipe) -> [f32; 3] {
+    let rgb = recipe.hue_sat.as_ref().map_or(rgb, |m| m.apply(rgb));
     let gain = 2f32.powf((settings.exposure + recipe.baseline_exposure).clamp(-20., 20.));
     let mut rgb = std::array::from_fn(|c| (rgb[c] * gain * settings.wb[c]).max(0.));
     let b = settings.basic;
@@ -155,8 +203,11 @@ pub fn evaluate_scene(rgb: [f32; 3], settings: Settings, recipe: &Recipe) -> [f3
     }
     let lo = rgb.into_iter().fold(f32::INFINITY, f32::min);
     let hi = rgb.into_iter().fold(f32::NEG_INFINITY, f32::max);
-    let low = curve_value(lo, &recipe.curve);
-    let high = curve_value(hi, &recipe.curve);
+    // Fuse the two endpoint mappings. Both use the same RGB line, so composing
+    // their endpoints avoids a second RGB interpolation and hue division.
+    let amount = highlight_rolloff(settings);
+    let low = curve_value(rolloff_value(lo, amount), &recipe.curve);
+    let high = curve_value(rolloff_value(hi, amount), &recipe.curve);
     rgb = if hi - lo > 1e-9 {
         rgb.map(|v| low + (v - lo) * (high - low) / (hi - lo))
     } else {
@@ -178,7 +229,7 @@ pub fn evaluate_scene(rgb: [f32; 3], settings: Settings, recipe: &Recipe) -> [f3
 #[cfg(not(any(windows, target_os = "macos")))]
 const SCENE_FRAGMENT: &str = r#"#version 330
 uniform sampler2D image; uniform sampler2D curve; uniform sampler3D look_table;
-uniform float gain; uniform vec4 tone; uniform vec3 chroma; uniform vec3 wb;
+uniform float gain; uniform float highlight_rolloff; uniform vec4 tone; uniform vec3 chroma; uniform vec3 wb;
 uniform sampler3D extra_look_table; uniform bool extra_look_encoded; uniform bool look_encoded; in vec2 uv; out vec4 color;
 float encode_s(float x) {return x<=0.0031308 ? 12.92*x : 1.055*pow(max(x,0.0),1.0/2.4)-0.055;}
 float decode_s(float x) {return x<=0.04045 ? x/12.92 : pow((x+0.055)/1.055,2.4);}
@@ -209,6 +260,7 @@ vec3 apply_look(vec3 rgb, sampler3D look_table, bool look_encoded) {
     return hsv_rgb(hsv);
 }
 float curve_value(float x) {
+    if(highlight_rolloff>0.0&&x>0.5){float a=x-0.5;x=0.5+a/(1.0+highlight_rolloff*a);}
     x=clamp(x,0.0,1.0);
     int n=textureSize(curve,0).x;float q=clamp(x,0.0,1.0)*float(n-1);int i=min(int(q),n-1),j=min(i+1,n-1);
     return mix(texelFetch(curve,ivec2(i,0),0).r,texelFetch(curve,ivec2(j,0),0).r,fract(q));
@@ -269,6 +321,76 @@ mod scene_tests {
         assert!((hdr[0] - clipped[0]).abs() > 0.1);
     }
     #[test]
+    fn positive_exposure_keeps_highlight_separation_without_dimming_middle_gray() {
+        let tone = fastcull::raw_color::default_tone();
+        let recipe = Recipe {
+            curve: (0..4096).map(|i| tone.eval(i as f32 / 4095.)).collect(),
+            ..Default::default()
+        };
+        let settings = Settings {
+            exposure: 1.,
+            ..Default::default()
+        };
+        let a = evaluate_scene([0.55; 3], settings, &recipe);
+        let b = evaluate_scene([0.85; 3], settings, &recipe);
+        assert!(
+            b[0] - a[0] > 1. / 255.,
+            "distinct scene highlights became the same white: {a:?} {b:?}"
+        );
+        close(
+            evaluate_scene([0.18; 3], settings, &recipe),
+            evaluate_scene([0.36; 3], Settings::default(), &recipe),
+        );
+    }
+    #[test]
+    fn highlight_shoulder_is_monotonic_continuous_and_preserves_the_lower_range() {
+        for ev in [0.001, 0.5, 1., 2., 3., 5.] {
+            let amount = highlight_rolloff(Settings {
+                exposure: ev,
+                ..Default::default()
+            });
+            let mut previous = 0.;
+            for i in 0..=8192 {
+                let input = i as f32 / 1024.;
+                let mapped = rolloff_value(input, amount);
+                assert!(mapped >= previous && mapped <= input + 1e-6);
+                if input <= 0.5 {
+                    assert_eq!(mapped, input);
+                }
+                previous = mapped;
+            }
+            let below = rolloff_value(0.5 - 1e-5, amount);
+            let above = rolloff_value(0.5 + 1e-5, amount);
+            assert!((above - below - 2e-5).abs() < 1e-7);
+        }
+        for ev in [-5., -1., 0.] {
+            assert_eq!(
+                highlight_rolloff(Settings {
+                    exposure: ev,
+                    ..Default::default()
+                }),
+                0.
+            );
+        }
+    }
+    #[test]
+    fn highlights_and_whites_can_recover_or_release_positive_exposure_headroom() {
+        let mut settings = Settings {
+            exposure: 1.,
+            ..Default::default()
+        };
+        let recipe = Recipe::default();
+        let neutral = evaluate_scene([0.55; 3], settings, &recipe);
+        settings.basic[1] = -1.;
+        let recovered = evaluate_scene([0.55; 3], settings, &recipe);
+        assert!(recovered[0] < neutral[0]);
+        settings.basic[1] = 0.;
+        settings.basic[3] = 1.;
+        assert_eq!(highlight_rolloff(settings), 0.);
+        let white = evaluate_scene([0.55; 3], settings, &recipe);
+        assert!(white[0] > neutral[0] && white[0] > 0.999);
+    }
+    #[test]
     fn minus_hundred_saturation_is_achromatic_even_with_vibrance() {
         let mut settings = Settings::default();
         settings.basic[5] = 1.;
@@ -326,6 +448,7 @@ mod scene_tests {
 }
 #[derive(Clone, Debug)]
 pub struct Recipe {
+    pub hue_sat: Option<fastcull::dcp::HsvMap>,
     pub look: Option<HsvLookup>,
     pub extra_look: Option<HsvLookup>,
     pub curve: Vec<f32>,
@@ -334,6 +457,7 @@ pub struct Recipe {
 impl Default for Recipe {
     fn default() -> Self {
         Self {
+            hue_sat: None,
             look: None,
             extra_look: None,
             curve: vec![0., 1.],
@@ -343,6 +467,8 @@ impl Default for Recipe {
 }
 /// Scene-referred, linear ProPhoto/D50. Values above one retain sensor headroom.
 pub struct LinearImage {
+    #[cfg(any(windows, target_os = "macos"))]
+    pub resident: Option<fastcull::raw_compute::Scene>,
     pub size: [usize; 2],
     pub pixels: Vec<[f32; 4]>,
     pub recipe: Recipe,
@@ -359,6 +485,41 @@ impl Default for Settings {
             exposure: 0.,
             basic: [0.; 7],
             wb: [1.; 3],
+        }
+    }
+}
+
+/// Immutable display inputs captured once, after this frame's controls settle.
+#[derive(Clone, Copy)]
+pub struct DisplayState {
+    pub settings: Settings,
+    pub provenance: Option<fastcull::raw_recipe::FrameProvenance>,
+}
+/// Record recipe transitions, rather than writing the same diagnostic on every
+/// repaint. This is a callback-entry marker, not a GPU-completion event.
+#[derive(Default)]
+struct PreparedRecipeTrace(std::sync::Mutex<Option<fastcull::raw_recipe::FrameProvenance>>);
+impl PreparedRecipeTrace {
+    fn observe(&self, provenance: Option<fastcull::raw_recipe::FrameProvenance>) {
+        let Some(provenance) = provenance else {
+            return;
+        };
+        let changed = {
+            let mut last = self.0.lock().unwrap();
+            let changed = *last != Some(provenance);
+            *last = Some(provenance);
+            changed
+        };
+        if changed {
+            fastcull::raw_trace::event("display_recipe_prepared", provenance.fields());
+        }
+    }
+}
+impl From<Settings> for DisplayState {
+    fn from(settings: Settings) -> Self {
+        Self {
+            settings,
+            provenance: None,
         }
     }
 }

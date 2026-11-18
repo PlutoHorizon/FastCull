@@ -15,7 +15,7 @@
 
 return {
 
-    VERSION = { major = 2, minor = 10, revision = 0 },
+    VERSION = { major = 2, minor = 11, revision = 0 },
 
     LrSdkVersion = 9.0,
     LrSdkMinimumVersion = 6.0,

@@ -24,7 +24,42 @@ enum State {
     Ready(Info),
     Failed(String),
 }
+pub enum Lookup<'a> {
+    Loading,
+    Ready(&'a Info),
+    Unavailable,
+}
+
+/// Image-relative pan that centers the visible AF points, using the exact paint UVs.
+pub fn focus_anchor(
+    info: &Info,
+    size: Vec2,
+    orientation: u16,
+    crop: fastcull::crop::Crop,
+) -> Option<Vec2> {
+    let raw = crop.raw_uvs(size);
+    let uvs = fastcull::crop::order(orientation).map(|i| raw[i]);
+    let unit = Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1., 1.));
+    let mut sum = Vec2::ZERO;
+    let mut count = 0;
+    for point in info
+        .areas
+        .iter()
+        .filter_map(|area| photo_focus::project(area.center, uvs, unit))
+    {
+        if point.is_finite() && unit.contains(point) {
+            sum += point.to_vec2();
+            count += 1;
+        }
+    }
+    (count > 0).then(|| Vec2::splat(0.5) - sum / count as f32)
+}
+
 impl Overlay {
+    #[cfg(test)]
+    pub fn insert_fixture(&mut self, path: PathBuf, info: Info) {
+        self.cache.insert(path, State::Ready(info));
+    }
     pub fn control(&mut self, ui: &mut egui::Ui) {
         if ui
             .add(egui::Button::new("对焦点").selected(self.enabled))
@@ -65,6 +100,26 @@ impl Overlay {
             let _ = self.worker.as_ref().unwrap().send.send(path.to_path_buf());
         }
     }
+    /// Metadata is also available when the visual overlay is switched off.
+    pub fn lookup(&mut self, path: &Path, ctx: &egui::Context) -> Lookup<'_> {
+        self.request(path, ctx);
+        if let Some(worker) = &self.worker {
+            while let Ok((path, result)) = worker.receive.try_recv() {
+                self.cache.insert(
+                    path,
+                    match result {
+                        Ok(info) => State::Ready(info),
+                        Err(error) => State::Failed(error),
+                    },
+                );
+            }
+        }
+        match self.cache.get(path) {
+            Some(State::Ready(info)) => Lookup::Ready(info),
+            Some(State::Failed(_)) => Lookup::Unavailable,
+            _ => Lookup::Loading,
+        }
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &mut self,
@@ -79,18 +134,7 @@ impl Overlay {
         if !self.enabled {
             return;
         }
-        self.request(path, painter.ctx());
-        if let Some(worker) = &self.worker {
-            while let Ok((path, result)) = worker.receive.try_recv() {
-                self.cache.insert(
-                    path,
-                    match result {
-                        Ok(info) => State::Ready(info),
-                        Err(error) => State::Failed(error),
-                    },
-                );
-            }
-        }
+        self.lookup(path, painter.ctx());
         let message = match self.cache.get(path) {
             Some(State::Ready(info)) if !info.areas.is_empty() => {
                 let raw = crop.raw_uvs(source_size);
@@ -161,6 +205,67 @@ impl Overlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auto_focus_anchor_tracks_all_orientations_and_ignores_cropped_points() {
+        let size = Vec2::new(6000., 4000.);
+        let point = egui::pos2(0.75, 0.25);
+        let info = Info {
+            source: "fixture",
+            areas: vec![photo_focus::Area {
+                center: point,
+                size: None,
+            }],
+        };
+        let expected = [
+            Vec2::new(-0.25, 0.25),
+            Vec2::new(0.25, 0.25),
+            Vec2::new(0.25, -0.25),
+            Vec2::new(-0.25, -0.25),
+            Vec2::new(0.25, -0.25),
+            Vec2::new(-0.25, -0.25),
+            Vec2::new(-0.25, 0.25),
+            Vec2::new(0.25, 0.25),
+        ];
+        for orientation in 1..=8 {
+            assert_eq!(
+                focus_anchor(&info, size, orientation, Default::default()),
+                Some(expected[orientation as usize - 1])
+            );
+        }
+        let crop = fastcull::crop::Crop {
+            enabled: true,
+            left: 500_000,
+            top: 0,
+            right: 1_000_000,
+            bottom: 500_000,
+            ..Default::default()
+        };
+        assert_eq!(focus_anchor(&info, size, 1, crop), Some(Vec2::ZERO));
+        let crop = fastcull::crop::Crop {
+            enabled: true,
+            right: 500_000,
+            ..Default::default()
+        };
+        assert!(focus_anchor(&info, size, 1, crop).is_none());
+        assert!(focus_anchor(&Info::default(), size, 1, Default::default()).is_none());
+        let group = Info {
+            source: "fixture",
+            areas: [
+                egui::pos2(0.6, 0.2),
+                egui::pos2(0.8, 0.4),
+                egui::pos2(0.2, 0.9),
+            ]
+            .map(|center| photo_focus::Area { center, size: None })
+            .into(),
+        };
+        let crop = fastcull::crop::Crop {
+            enabled: true,
+            left: 500_000,
+            ..Default::default()
+        };
+        let anchor = focus_anchor(&group, size, 1, crop).unwrap();
+        assert!((anchor - Vec2::new(0.1, 0.2)).length() < 0.0001);
+    }
     #[test]
     fn overlay_uses_image_transform_clips_cropped_points_and_leaves_source_untouched() {
         let ctx = egui::Context::default();

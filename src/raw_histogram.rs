@@ -2,13 +2,23 @@
 use crate::raw_preview::{LinearImage, Recipe, Settings, evaluate_scene};
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 
+/// Reserve the original layout now; evaluate/paint after controls have settled.
+pub struct Slot {
+    painter: egui::Painter,
+    rect: egui::Rect,
+}
 pub struct Histogram {
     samples: Vec<[f32; 3]>,
     settings: Option<Settings>,
     bins: [[u32; 256]; 4],
     recipe: Option<Recipe>,
+    provenance: Option<fastcull::raw_recipe::FrameProvenance>,
 }
 impl Histogram {
+    #[cfg(test)]
+    pub(crate) fn provenance(&self) -> Option<fastcull::raw_recipe::FrameProvenance> {
+        self.provenance
+    }
     pub fn from_image(image: &egui::ColorImage) -> Self {
         let [w, h] = image.size;
         let mut samples = Vec::new();
@@ -30,11 +40,16 @@ impl Histogram {
             settings: None,
             bins: [[0; 256]; 4],
             recipe: None,
+            provenance: None,
         }
     }
     pub fn from_linear(image: &LinearImage) -> Self {
         let [w, h] = image.size;
         let mut samples = Vec::new();
+        #[cfg(any(windows, target_os = "macos"))]
+        if let Some(scene) = &image.resident {
+            samples.extend(scene.samples.iter().map(|p| [p[0], p[1], p[2]]));
+        }
         if w > 0 && h > 0 && w.checked_mul(h) == Some(image.pixels.len()) {
             let (nx, ny) = (w.min(128), h.min(128));
             for y in 0..ny {
@@ -53,6 +68,7 @@ impl Histogram {
             settings: None,
             bins: [[0; 256]; 4],
             recipe: Some(image.recipe.clone()),
+            provenance: None,
         }
     }
     fn update(&mut self, settings: Settings) {
@@ -73,8 +89,7 @@ impl Histogram {
         }
         self.settings = Some(settings);
     }
-    pub fn show(&mut self, ui: &mut egui::Ui, settings: Settings) {
-        self.update(settings);
+    pub fn allocate(ui: &mut egui::Ui) -> Slot {
         ui.horizontal(|ui| {
             ui.strong("直方图");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -84,7 +99,29 @@ impl Histogram {
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 124.), egui::Sense::hover());
         response.on_hover_text("当前本地显影预览的 RGB / 亮度分布（采样）；随调整更新。左右三角表示通道存在暗部 / 高光剪切。");
-        let painter = ui.painter_at(rect);
+        ui.horizontal(|ui| {
+            ui.weak("暗部");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.weak("高光");
+            });
+        });
+        Slot {
+            painter: ui.painter_at(rect),
+            rect,
+        }
+    }
+    pub fn present(
+        &mut self,
+        slot: Slot,
+        settings: Settings,
+        provenance: fastcull::raw_recipe::FrameProvenance,
+    ) {
+        self.update(settings);
+        if self.provenance != Some(provenance) {
+            fastcull::raw_trace::event("histogram_recipe", provenance.fields());
+        }
+        self.provenance = Some(provenance);
+        let Slot { painter, rect } = slot;
         painter.rect_filled(rect, 4., Color32::from_gray(19));
         let plot = rect.shrink2(Vec2::new(8., 12.));
         for i in 1..4 {
@@ -147,12 +184,6 @@ impl Histogram {
                 Stroke::NONE,
             ));
         }
-        ui.horizontal(|ui| {
-            ui.weak("暗部");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak("高光");
-            });
-        });
     }
 }
 fn luminance(rgb: [f32; 3]) -> f32 {
@@ -196,6 +227,8 @@ mod tests {
     #[test]
     fn float_histogram_keeps_headroom_until_the_display_transform() {
         let image = LinearImage {
+            #[cfg(any(windows, target_os = "macos"))]
+            resident: None,
             size: [1025, 769],
             pixels: vec![[2., 2., 2., 1.]; 1025 * 769],
             recipe: Recipe::default(),

@@ -13,9 +13,19 @@
 #include <memory>
 #include <string>
 #include <atomic>
+#include <thread>
+#include <cstdlib>
+#include <array>
+#include <vector>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include "white_balance.h"
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -50,6 +60,17 @@ static int fail(char *error, const char *text) {
 static bool dimensions(unsigned w, unsigned h) {
     return w && h && uint64_t(w)*h <= 160000000;
 }
+static void configure_develop_threads() {
+#ifdef _OPENMP
+    unsigned count=std::min(4u,std::max(1u,std::thread::hardware_concurrency()));
+    if(const char *value=std::getenv("FASTCULL_RAW_THREADS")) {
+        const int requested=std::atoi(value);
+        if(requested>=1 && requested<=8)count=unsigned(requested);
+    }
+    omp_set_dynamic(0);
+    omp_set_num_threads(int(count));
+#endif
+}
 static unsigned orientation(int flip) {
     static const unsigned map[] = {1,2,4,3,5,8,6,7};
     return flip >= 0 && flip < 8 ? map[flip] : 1;
@@ -69,10 +90,10 @@ static void size_callback(void *context,int tag,int type,int count,unsigned orde
     auto *size=static_cast<ExifSize*>(context);
     if(tag==0xa002)size->width=value;else size->height=value;
 }
-static int open_camera(LibRaw &raw,const FCPathChar *path) {
+static int open_camera(LibRaw &raw,const FCPathChar *path,const void *buffer=nullptr,size_t length=0) {
     ExifSize exif;
     raw.set_exifparser_handler(size_callback,&exif);
-    int code=raw.open_file(path);
+    int code=buffer?raw.open_buffer(buffer,length):raw.open_file(path);
     raw.set_exifparser_handler(nullptr,nullptr);
     if(code)return code;
     // Camera output excludes small sensor border regions. Use an explicit
@@ -192,6 +213,7 @@ FC_EXPORT int fc_raw_decode(const FCPathChar *path, int full, FCFrame *out, char
         if (!image || (full && (w+2<raw.imgdata.sizes.width || h+2<raw.imgdata.sizes.height))) {
             if (image) LibRaw::dcraw_clear_mem(image);
             image=nullptr;
+            configure_develop_threads();
             if ((code=raw.unpack()) || (code=raw.dcraw_process())) return fail(error,libraw_strerror(code));
             image=raw.dcraw_make_mem_image(&code);rendered=true;
             if (!image) return fail(error,libraw_strerror(code));
@@ -326,8 +348,212 @@ static void linear_exposure(void *pointer) {
     for(size_t i=0;i<count;++i) for(int c=0;c<4;++c)
         raw.imgdata.image[i][c]=ushort(std::min(65535.0,raw.imgdata.image[i][c]*scale));
 }
+struct FCBayerParams {
+    uint32_t abi,width,height,filters;
+    float xyz[3][4];
+    const float *cbrt;
+};
+static_assert(sizeof(FCBayerParams)==72,"GPU Bayer ABI layout changed");
+using FCBayerCompute=int(*)(void*,uint16_t*,const FCBayerParams*);
+// Auditable unpack dispatch record shared with the Rust host. The bridge fills
+// what it selected (decoder name, storage/active geometry, reason) and the host
+// records the backend it actually adopted. Versioned by `abi`, so a host that
+// passes no pointer or an older bridge simply sees no record.
+struct FCEntropyDispatch {
+    uint32_t abi,matched,reason,callback;
+    uint32_t raw_width,raw_height,active_width,active_height;
+    uint32_t filters,colors,dng_version,tiff_samples,shot_select,raw_pitch;
+    char decoder[32];
+};
+static_assert(sizeof(FCEntropyDispatch)==88,"dispatch ABI layout changed");
+// Keep the established callback ABI. Audit data travels through the separate
+// fc_raw_last_unpack_dispatch export, never through a larger callback payload.
+struct FCEntropyParams {uint32_t abi,kind,width,height,channels;};
+static_assert(sizeof(FCEntropyParams)==20,"GPU entropy ABI layout changed");
+using FCEntropyCompute=int(*)(void*,uint16_t*,const FCEntropyParams*);
+// reason: 0 adopted, 1 decoder not in the supported set, 2 size limit,
+// 3 no entropy callback requested, 4 unpack skipped (cached frame reused).
+enum { FC_DISPATCH_ADOPTED=0, FC_DISPATCH_DECODER=1, FC_DISPATCH_SIZE=2, FC_DISPATCH_NO_CALLBACK=3, FC_DISPATCH_REUSED=4,
+       FC_DISPATCH_DECLINED=5, FC_DISPATCH_CANCELLED=6, FC_DISPATCH_COMMIT_LAYOUT=7, FC_DISPATCH_NOT_CALLED=8 };
+thread_local FCEntropyDispatch fc_last_dispatch{};
+thread_local bool fc_last_dispatch_valid=false;
+static void publish_dispatch_reason(uint32_t reason){
+    FCEntropyDispatch record{};
+    record.abi=2;record.reason=reason;
+    fc_last_dispatch=record;fc_last_dispatch_valid=true;
+}
+struct ReadMapping {
+    const void *data=nullptr;size_t length=0;
+    ~ReadMapping(){reset();}
+    void reset(){
+        if(data){
+#ifdef _WIN32
+            UnmapViewOfFile(data);
+#else
+            munmap(const_cast<void*>(data),length);
+#endif
+        }
+        data=nullptr;length=0;
+    }
+    void open(const FCPathChar *path,uint64_t bytes){
+        reset();
+        // Measured entropy decoding is CPU-bound; mapping did not consistently
+        // improve all formats. Keep the proven file stream as the default.
+        const char *mapping=std::getenv("FASTCULL_RAW_MMAP");
+        if(bytes<1024*1024 || bytes>2ull*1024*1024*1024 || !mapping || std::strcmp(mapping,"1") || std::getenv("FASTCULL_RAW_FILE_IO"))return;
+#ifdef _WIN32
+        HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(file==INVALID_HANDLE_VALUE)return;
+        LARGE_INTEGER size={};
+        if(GetFileSizeEx(file,&size) && uint64_t(size.QuadPart)==bytes){
+            HANDLE mapping=CreateFileMappingW(file,nullptr,PAGE_READONLY,0,0,nullptr);
+            if(mapping){data=MapViewOfFile(mapping,FILE_MAP_READ,0,0,size_t(bytes));CloseHandle(mapping);}
+        }
+        CloseHandle(file);
+#else
+        int file=::open(path,O_RDONLY);
+        if(file<0)return;
+        struct stat size={};
+        if(!fstat(file,&size) && uint64_t(size.st_size)==bytes){
+            void *mapped=mmap(nullptr,size_t(bytes),PROT_READ,MAP_PRIVATE,file,0);
+            if(mapped!=MAP_FAILED)data=mapped;
+        }
+        close(file);
+#endif
+        if(data)length=size_t(bytes);
+    }
+};
 struct DevelopRaw : LibRaw {
-    DevelopRaw() : LibRaw(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK) { callbacks.pre_interpolate_cb=linear_exposure; }
+    ReadMapping mapping;
+    FCBayerCompute compute=nullptr;
+    void *compute_context=nullptr;
+    void (LibRaw::*original_decoder)()=nullptr;
+    FCEntropyCompute entropy_compute=nullptr;
+    void *entropy_context=nullptr;
+    uint32_t entropy_kind=0;
+    FCEntropyDispatch *unpack_dispatch=nullptr;
+    int get_decoder_info(libraw_decoder_info_t *out) override {
+        if(!original_decoder)return LibRaw::get_decoder_info(out);
+        auto current=load_raw;load_raw=original_decoder;
+        int code=LibRaw::get_decoder_info(out);load_raw=current;return code;
+    }
+    void restore_decoder(){if(original_decoder)load_raw=original_decoder;original_decoder=nullptr;entropy_compute=nullptr;entropy_context=nullptr;entropy_kind=0;}
+    void fill_dispatch(FCEntropyDispatch &record){
+        const char *name=unpack_function_name();
+        std::snprintf(record.decoder,sizeof(record.decoder),"%s",name?name:"(unknown)");
+        record.raw_width=imgdata.sizes.raw_width;record.raw_height=imgdata.sizes.raw_height;
+        record.active_width=imgdata.sizes.width;record.active_height=imgdata.sizes.height;
+        record.raw_pitch=imgdata.sizes.raw_pitch;
+        record.filters=imgdata.idata.filters;record.colors=imgdata.idata.colors;
+        record.dng_version=imgdata.idata.dng_version;
+        record.tiff_samples=libraw_internal_data.unpacker_data.tiff_samples;
+        record.shot_select=imgdata.rawparams.shot_select;
+    }
+    int unpack_compute(FCEntropyCompute fn,void *ctx){
+        FCEntropyDispatch record{};
+        record.abi=2;
+        fill_dispatch(record);
+        struct Publish{
+            DevelopRaw &raw;
+            FCEntropyDispatch &record;
+            ~Publish(){raw.unpack_dispatch=nullptr;record.abi=2;fc_last_dispatch=record;fc_last_dispatch_valid=true;}
+        } publish{*this,record};
+        unpack_dispatch=&record;
+        if(!fn){record.reason=FC_DISPATCH_NO_CALLBACK;return LibRaw::unpack();}
+        const char *name=unpack_function_name();
+        if(!std::strcmp(name,"sony_ljpeg_load_raw()") && imgdata.idata.colors==3 && imgdata.idata.filters &&
+            !(imgdata.sizes.raw_width&1) && !(imgdata.sizes.raw_height&1))
+            entropy_kind=1;
+        else if(!std::strcmp(name,"lossless_dng_load_raw()") && imgdata.idata.dng_version>=0x1010000 && !imgdata.idata.filters && imgdata.idata.colors==3 &&
+            libraw_internal_data.unpacker_data.tiff_samples==3 && imgdata.rawparams.shot_select==0 &&
+            (libraw_internal_data.unpacker_data.dng_frames[0]&255)==0)
+            entropy_kind=2;
+        if(!entropy_kind){record.reason=FC_DISPATCH_DECODER;return LibRaw::unpack();}
+        if(uint64_t(imgdata.sizes.raw_width)*imgdata.sizes.raw_height*(entropy_kind==1?1:3)>160000000){
+            record.reason=FC_DISPATCH_SIZE;return LibRaw::unpack();
+        }
+        record.matched=entropy_kind;record.reason=FC_DISPATCH_NOT_CALLED;
+        original_decoder=load_raw;entropy_compute=fn;entropy_context=ctx;
+        // Standard derived-to-base member-pointer conversion; the dynamic object
+        // is always DevelopRaw. Decoder identification continues to see upstream.
+        load_raw=static_cast<void(LibRaw::*)()>(&DevelopRaw::gpu_unpack_tiles);
+        struct Restore {DevelopRaw &raw;~Restore(){raw.restore_decoder();}} restore{*this};
+        int code=LibRaw::unpack();
+        if(!code)fill_dispatch(record); // LibRaw may clear geometry on cancellation.
+        return code;
+    }
+    void gpu_unpack_tiles(){
+        FCEntropyParams params={1,entropy_kind,imgdata.sizes.raw_width,imgdata.sizes.raw_height,entropy_kind==1?1u:3u};
+        const size_t count=size_t(params.width)*params.height*params.channels;
+        std::vector<uint16_t> pixels(count);
+        auto &dispatch=*unpack_dispatch;
+        dispatch.callback=1;
+        int status=entropy_compute(entropy_context,pixels.data(),&params);
+        if(status<0){dispatch.reason=FC_DISPATCH_CANCELLED;throw LIBRAW_EXCEPTION_CANCELLED_BY_CALLBACK;}
+        if(status==0){dispatch.reason=FC_DISPATCH_DECLINED;(this->*original_decoder)();return;}
+        if(entropy_kind==1 && imgdata.rawdata.raw_image && imgdata.sizes.raw_pitch>=params.width*2){
+            for(unsigned row=0;row<params.height;row++)
+                std::memcpy(imgdata.rawdata.raw_image+size_t(row)*(imgdata.sizes.raw_pitch/2),pixels.data()+size_t(row)*params.width,size_t(params.width)*2);
+        }else if(entropy_kind==2 && imgdata.image && !imgdata.rawdata.raw_image){
+            // The same curve mapping as adobe_copy_pixel for a linear 3-channel
+            // DNG; keep LibRaw's allocation, black-level and later color phases.
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+            for(int row=0;row<int(params.height);row++)for(unsigned col=0;col<params.width;col++){
+                const size_t i=size_t(row)*params.width+col;
+                for(unsigned c=0;c<3;c++)imgdata.image[i][c]=imgdata.color.curve[pixels[i*3+c]];
+            }
+        }else{dispatch.reason=FC_DISPATCH_COMMIT_LAYOUT;(this->*original_decoder)();return;}
+        dispatch.reason=FC_DISPATCH_CANCELLED;
+        checkCancel();
+        dispatch.reason=FC_DISPATCH_ADOPTED;
+    }
+    void set_compute(FCBayerCompute fn,void *ctx) {
+        compute=fn;compute_context=ctx;
+        callbacks.interpolate_bayer_cb=nullptr;
+    }
+    static void prepare_interpolate(void *pointer) {
+        linear_exposure(pointer);
+        auto &raw=*static_cast<DevelopRaw*>(pointer);
+        auto &d=raw.imgdata;
+        bool supported=raw.compute && d.params.user_qual==3 && d.idata.filters>1000 && d.idata.colors==3;
+        unsigned counts[3]={};
+        if(supported)for(int y=0;y<2;y++)for(int x=0;x<2;x++) {
+            int c=raw.COLOR(y,x);
+            if(c>2){supported=false;continue;}counts[c]++;
+            if(c==raw.COLOR(y+1,x)||c==raw.COLOR(y,x+1))supported=false;
+        }
+        supported=supported&&counts[0]==1&&counts[1]==2&&counts[2]==1;
+        if(supported)for(int y=0;y<8;y++)for(int x=0;x<8;x++)
+            if(raw.COLOR(y,x)!=raw.COLOR(y%2,x%2))supported=false;
+        raw.callbacks.interpolate_bayer_cb=supported?gpu_ahd:nullptr;
+    }
+    static void gpu_ahd(void *pointer) {
+        auto &raw=*static_cast<DevelopRaw*>(pointer);
+        auto &d=raw.imgdata;
+        bool supported=d.idata.colors==3 && d.sizes.width>=16 && d.sizes.height>=16;
+        for(unsigned y=0;y<8 && supported;y++)for(unsigned x=0;x<8;x++)
+            if(raw.COLOR(y,x)>2 || raw.COLOR(y,x)!=raw.COLOR(y%2,x%2)) supported=false;
+        if(supported && raw.compute) {
+            raw.border_interpolate(5);
+            FCBayerParams params={1,d.sizes.width,d.sizes.height,d.idata.filters,{}};
+            for(int i=0;i<3;i++)for(int j=0;j<3;j++)for(int k=0;k<3;k++)
+                params.xyz[i][j]+=float(LibRaw_constants::xyz_rgb[i][k]*d.color.rgb_cam[k][j]/LibRaw_constants::d65_white[i]);
+            static const std::array<float,65536> table=[]{
+                std::array<float,65536> result={};
+                for(unsigned i=0;i<65536;i++){const float r=i/65535.0f;result[i]=r>0.008856f?std::pow(r,1.f/3.f):7.787f*r+16.f/116.f;}
+                return result;
+            }();
+            params.cbrt=table.data();
+            const int status=raw.compute(raw.compute_context,&d.image[0][0],&params);
+            if(status>0)return;
+            if(status<0)throw LIBRAW_EXCEPTION_CANCELLED_BY_CALLBACK;
+        }
+        raw.ahd_interpolate();
+    }
+    DevelopRaw() : LibRaw(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK) { callbacks.pre_interpolate_cb=prepare_interpolate; }
+    ~DevelopRaw(){recycle_datastream();mapping.reset();}
 };
 struct DevelopCache {
     std::unique_ptr<DevelopRaw> raw;
@@ -338,6 +564,13 @@ struct DevelopCache {
 };
 static DevelopCache develop_cache;
 static DevelopCache linear_cache;
+// Called only after the editor's worker has stopped. Keep the module/device
+// alive while releasing mapped files and unpacked sensor planes between photos.
+FC_EXPORT void fc_raw_develop_idle() {
+    std::lock_guard<std::mutex> gate(develop_gate);
+    develop_cache=DevelopCache{};
+    linear_cache=DevelopCache{};
+}
 static bool file_stamp(const FCPathChar *path,uint64_t &bytes,uint64_t &stamp) {
 #ifdef _WIN32
     WIN32_FILE_ATTRIBUTE_DATA data={};
@@ -354,7 +587,7 @@ struct CacheAttempt {
     DevelopCache &cache;
     bool success=false;
     ~CacheAttempt(){
-        if(cache.raw){cache.raw->set_progress_handler(nullptr,nullptr);cache.raw->free_image();}
+        if(cache.raw){cache.raw->set_compute(nullptr,nullptr);cache.raw->set_progress_handler(nullptr,nullptr);cache.raw->free_image();}
         if(!success)cache.raw.reset();
     }
 };
@@ -385,6 +618,7 @@ FC_EXPORT int fc_raw_develop(const FCPathChar *path,const FCDevelopParams *param
         if(!reused){develop_cache.raw.reset(new DevelopRaw);develop_cache.path=path;develop_cache.bytes=bytes;develop_cache.stamp=stamp;}
         CacheAttempt attempt{develop_cache};
         auto &raw=*develop_cache.raw;ActiveDevelop active(raw);
+        configure_develop_threads();
         raw.clearCancelFlag();
         raw.set_progress_handler(develop_progress,&context);
         raw.imgdata.rawparams.max_raw_memory_mb=1024;
@@ -444,7 +678,8 @@ FC_EXPORT int fc_raw_develop(const FCPathChar *path,const FCDevelopParams *param
     }catch(const std::exception &e){return fail(error,e.what());}catch(...){return fail(error,"LibRaw develop exception");}
 }
 
-FC_EXPORT int fc_raw_develop_linear(const FCPathChar *path,const FCDevelopParams *params,FCFrame *out,FCLinearInfo *info,char *error) {
+static int develop_linear(const FCPathChar *path,const FCDevelopParams *params,FCFrame *out,FCLinearInfo *info,char *error,FCBayerCompute compute,void *compute_context,FCEntropyCompute entropy=nullptr,void *entropy_context=nullptr) {
+    fc_last_dispatch_valid=false;
     if(!out||!info||!error||!path)return -1;
     std::memset(out,0,sizeof(*out));std::memset(info,0,sizeof(*info));
     if(!params||params->abi!=1||!std::isfinite(params->exposure)||std::abs(params->exposure)>5||
@@ -471,6 +706,8 @@ FC_EXPORT int fc_raw_develop_linear(const FCPathChar *path,const FCDevelopParams
         const bool reused=linear_cache.raw&&linear_cache.path==path&&linear_cache.bytes==bytes&&linear_cache.stamp==stamp;
         if(!reused){linear_cache.raw.reset(new DevelopRaw);linear_cache.path=path;linear_cache.bytes=bytes;linear_cache.stamp=stamp;}
         CacheAttempt attempt{linear_cache};auto &raw=*linear_cache.raw;ActiveDevelop active(raw);
+        raw.set_compute(params->max_edge?nullptr:compute,compute_context);
+        configure_develop_threads();
         raw.clearCancelFlag();raw.set_progress_handler(develop_progress,&context);
         raw.imgdata.rawparams.max_raw_memory_mb=1024;
         auto &p=raw.imgdata.params;
@@ -482,7 +719,8 @@ FC_EXPORT int fc_raw_develop_linear(const FCPathChar *path,const FCDevelopParams
         p.highlight=1;std::memset(p.user_mul,0,sizeof(p.user_mul));
         auto started=std::chrono::steady_clock::now();int code=0;
         if(!reused){
-            code=open_camera(raw,path);if(code)return fail(error,libraw_strerror(code));
+            raw.mapping.open(path,bytes);
+            code=open_camera(raw,path,raw.mapping.data,raw.mapping.length);if(code)return fail(error,libraw_strerror(code));
             if(!dimensions(raw.imgdata.sizes.width,raw.imgdata.sizes.height))return fail(error,"RAW dimensions exceed 160 MP limit");
             linear_cache.basis={};linear_cache.basis.abi=1;
             linear_cache.basis.orientation=orientation(raw.imgdata.sizes.flip);
@@ -502,10 +740,13 @@ FC_EXPORT int fc_raw_develop_linear(const FCPathChar *path,const FCDevelopParams
         info->open_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
         if(context.cancelled())return fail(error,"Linear RAW develop cancelled");
         if(!reused){
-            started=std::chrono::steady_clock::now();code=raw.unpack();
+            started=std::chrono::steady_clock::now();code=raw.unpack_compute(entropy,entropy_context);
             if(code)return fail(error,libraw_strerror(code));
             info->unpack_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
             raw.recycle_datastream();
+            raw.mapping.reset();
+        }else{
+            publish_dispatch_reason(FC_DISPATCH_REUSED);
         }
         if(context.cancelled())return fail(error,"Linear RAW develop cancelled");
         started=std::chrono::steady_clock::now();code=raw.dcraw_process();
@@ -539,3 +780,19 @@ FC_EXPORT int fc_raw_develop_linear(const FCPathChar *path,const FCDevelopParams
         attempt.success=true;return 0;
     }catch(const std::exception &e){return fail(error,e.what());}catch(...){return fail(error,"LibRaw linear develop exception");}
 }
+FC_EXPORT int fc_raw_develop_linear(const FCPathChar *path,const FCDevelopParams *params,FCFrame *out,FCLinearInfo *info,char *error) {
+    return develop_linear(path,params,out,info,error,nullptr,nullptr);
+}
+FC_EXPORT int fc_raw_develop_linear_gpu(const FCPathChar *path,const FCDevelopParams *params,FCFrame *out,FCLinearInfo *info,char *error,FCBayerCompute compute,void *compute_context) {
+    return develop_linear(path,params,out,info,error,compute,compute_context);
+}
+FC_EXPORT int fc_raw_develop_linear_compute(const FCPathChar *path,const FCDevelopParams *params,FCFrame *out,FCLinearInfo *info,char *error,FCBayerCompute compute,void *compute_context,FCEntropyCompute entropy,void *entropy_context) {
+    return develop_linear(path,params,out,info,error,compute,compute_context,entropy,entropy_context);
+}
+// Audit hook: what the last linear develop on this thread used for unpacking.
+FC_EXPORT int fc_raw_last_unpack_dispatch(FCEntropyDispatch *out) {
+    if(!out||!fc_last_dispatch_valid)return 0;
+    *out=fc_last_dispatch;return 1;
+}
+
+#include "sensor_checkpoint.h"

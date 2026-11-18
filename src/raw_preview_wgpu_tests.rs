@@ -2,6 +2,37 @@ use super::*;
 use crate::raw_preview::{HsvLookup, evaluate_scene};
 
 #[test]
+fn resident_crops_validate_the_actual_two_dimensional_sample_shape() {
+    let limits = wgpu::Limits::default();
+    for size in [[7, 11], [127, 127], [1, 1600], [1600, 1], [6192, 4128]] {
+        let pixels = vec![[0.18, 0.18, 0.18, 1.]; size[0].min(128) * size[1].min(128)];
+        assert!(
+            validate_resident(size, &pixels, &Recipe::default(), &limits).is_ok(),
+            "crop {size:?}"
+        );
+        assert!(
+            validate_resident(
+                size,
+                &pixels[..pixels.len() - 1],
+                &Recipe::default(),
+                &limits
+            )
+            .is_err()
+        );
+    }
+    assert!(validate_resident([0, 1], &[], &Recipe::default(), &limits).is_err());
+    assert!(
+        validate_resident(
+            [limits.max_texture_dimension_2d as usize + 1, 1],
+            &[[0.; 4]],
+            &Recipe::default(),
+            &limits
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn invalid_float_frames_are_rejected_before_gpu_upload() {
     let limits = wgpu::Limits::default();
     let pixels = [[0.18, 0.18, 0.18, 1.]];
@@ -20,6 +51,13 @@ fn invalid_float_frames_are_rejected_before_gpu_upload() {
     assert!(validate_image([1, 1], &pixels, &recipe, &limits).is_err());
     recipe.look = None;
     recipe.baseline_exposure = f32::INFINITY;
+    assert!(validate_image([1, 1], &pixels, &recipe, &limits).is_err());
+    recipe = Recipe::default();
+    recipe.hue_sat = Some(fastcull::dcp::HsvMap {
+        dims: [0, 2, 1],
+        data: vec![],
+        encoding: fastcull::dcp::Encoding::Linear,
+    });
     assert!(validate_image([1, 1], &pixels, &recipe, &limits).is_err());
 }
 
@@ -147,6 +185,10 @@ fn native_gpu_pixels_match_cpu_scene_and_jpeg_reference() {
                 [0.18, 0.18, 0.18, 1.]
             } else if i == 2 {
                 [4., 2., 1.1, 1.]
+            } else if i == 3 {
+                [-0.1, 0.5, 0.2, 1.]
+            } else if i == 4 {
+                [-0.1, -0.2, -0.3, 1.]
             } else {
                 [
                     (i % 13) as f32 / 12.,
@@ -158,7 +200,7 @@ fn native_gpu_pixels_match_cpu_scene_and_jpeg_reference() {
         })
         .collect();
     let mut cases = 0;
-    for encoding in [0, 1, 2, 3] {
+    for encoding in 0..7 {
         let mut recipe = Recipe::default();
         if encoding < 2 {
             recipe.baseline_exposure = 0.3;
@@ -177,7 +219,7 @@ fn native_gpu_pixels_match_cpu_scene_and_jpeg_reference() {
                     .collect(),
             });
         }
-        if encoding == 3 {
+        if encoding == 3 || encoding >= 4 {
             recipe.look = Some(HsvLookup {
                 dims: [1, 2, 1],
                 data: vec![[0., 1., 1.], [8., 0.8, 1.1]],
@@ -193,6 +235,33 @@ fn native_gpu_pixels_match_cpu_scene_and_jpeg_reference() {
                 ],
                 encoding: 1,
             });
+        }
+        if encoding >= 4 {
+            let nv = if encoding == 4 { 1 } else { 2 };
+            recipe.hue_sat = Some(
+                fastcull::dcp::HsvMap::new(
+                    [3, 3, nv],
+                    (0..9 * nv)
+                        .map(|i| {
+                            [
+                                (i % 7) as f32 * 5. - 15.,
+                                0.7 + (i % 5) as f32 * 0.1,
+                                if i % 3 == 0 {
+                                    1.
+                                } else {
+                                    0.9 + (i % 4) as f32 * 0.08
+                                },
+                            ]
+                        })
+                        .collect(),
+                    if encoding == 6 {
+                        fastcull::dcp::Encoding::Srgb
+                    } else {
+                        fastcull::dcp::Encoding::Linear
+                    },
+                )
+                .unwrap(),
+            );
         }
         let image = upload_image(&device, &queue, [64, 1], &samples, &recipe).unwrap();
         let mut settings = vec![
@@ -218,6 +287,15 @@ fn native_gpu_pixels_match_cpu_scene_and_jpeg_reference() {
             basic: [0.2, -0.35, 0.25, 0.15, -0.1, 1., -1.],
             ..Default::default()
         });
+        for exposure in [0.5, 1., 2., 3., 5.] {
+            for (highlights, whites) in [(0., 0.), (-0.7, -0.3), (0.5, 1.)] {
+                settings.push(Settings {
+                    exposure,
+                    basic: [0., highlights, 0., whites, 0., 0., 0.],
+                    ..Default::default()
+                });
+            }
+        }
         for s in settings {
             let params = parameters(rect, rect, uvs, s, &recipe, true, false);
             let result = render(&device, &queue, &pipelines, &image, params, true);
@@ -235,6 +313,66 @@ fn native_gpu_pixels_match_cpu_scene_and_jpeg_reference() {
             }
             cases += 1;
         }
+    }
+    // A nonlinear HueSatMap must precede bilinear resampling. Compare actual
+    // fractional/mirrored samples with a separately CPU-baked source texture.
+    let deferred = Recipe {
+        hue_sat: Some(
+            fastcull::dcp::HsvMap::new(
+                [1, 2, 1],
+                vec![[0., 1., 1.], [115., 0.65, 1.25]],
+                fastcull::dcp::Encoding::Linear,
+            )
+            .unwrap(),
+        ),
+        ..Default::default()
+    };
+    let raw: Vec<[f32; 4]> = (0..64)
+        .map(|i| {
+            if i % 2 == 0 {
+                [0.8, 0.05, 0.02, 1.]
+            } else {
+                [0.02, 0.15, 0.7, 1.]
+            }
+        })
+        .collect();
+    let baked: Vec<[f32; 4]> = raw
+        .iter()
+        .map(|p| {
+            let q = deferred.hue_sat.as_ref().unwrap().apply([p[0], p[1], p[2]]);
+            [q[0], q[1], q[2], 1.]
+        })
+        .collect();
+    let a = upload_image(&device, &queue, [64, 1], &raw, &deferred).unwrap();
+    let plain = Recipe::default();
+    let b = upload_image(&device, &queue, [64, 1], &baked, &plain).unwrap();
+    for (left, right) in [(0.25 / 64., 1. - 0.25 / 64.), (1. - 0.25 / 64., 0.25 / 64.)] {
+        let uv = [
+            egui::pos2(left, 0.),
+            egui::pos2(right, 0.),
+            egui::pos2(right, 1.),
+            egui::pos2(left, 1.),
+        ];
+        let got = render(
+            &device,
+            &queue,
+            &pipelines,
+            &a,
+            parameters(rect, rect, uv, Settings::default(), &deferred, true, false),
+            true,
+        );
+        let reference = render(
+            &device,
+            &queue,
+            &pipelines,
+            &b,
+            parameters(rect, rect, uv, Settings::default(), &plain, true, false),
+            true,
+        );
+        assert!(
+            got.iter().zip(reference).all(|(a, b)| a.abs_diff(b) <= 1),
+            "HueSatMap was moved after resampling"
+        );
     }
     let jpeg: Vec<[f32; 4]> = (0..64)
         .map(|i| [i as f32 / 63., (63 - i) as f32 / 63., 0.18, 1.])
