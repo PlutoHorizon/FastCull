@@ -1,6 +1,7 @@
 //! Non-destructive crop draft: only Apply writes photo metadata.
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, Vec2};
 use fastcull::crop::{self, Crop, Geometry};
+use fastcull::theme;
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -279,7 +280,7 @@ impl Editor {
         });
         ui.add(
             egui::TextEdit::singleline(&mut self.name)
-                .hint_text("预设名称")
+                .hint_text(theme::placeholder("预设名称"))
                 .desired_width(ui.available_width()),
         );
         ui.horizontal(|ui| {

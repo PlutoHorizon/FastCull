@@ -30,6 +30,11 @@ eframe = { version = "0.33", default-features = false, features = ["wgpu"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 libloading = "0.8"
 objc2 = "0.6"
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "CGColorSpace",
+    "objc2",
+    "std",
+] }
 wgpu = { version = "27.0", default-features = false, features = ["std", "metal", "wgsl"] }
 
 [target.'cfg(windows)'.dependencies]

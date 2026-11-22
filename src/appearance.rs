@@ -61,7 +61,7 @@ pub fn palette(ctx: &egui::Context) -> Palette {
 fn settings_path() -> PathBuf {
     std::env::var_os("FASTCULL_APPEARANCE_FILE")
         .map(PathBuf::from)
-        .unwrap_or_else(|| fastcull::platform::data_directory().join("appearance.txt"))
+        .unwrap_or_else(|| crate::platform::data_directory().join("appearance.txt"))
 }
 fn parse(value: &str) -> ThemePreference {
     match value.trim() {

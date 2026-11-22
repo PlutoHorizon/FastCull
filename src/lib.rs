@@ -1,4 +1,5 @@
 pub mod adobe_raw;
+pub mod appearance;
 mod adobe_tone_curve;
 pub mod arw;
 mod camera_rating;
@@ -34,5 +35,6 @@ pub mod raw_trace;
 pub mod relocating;
 pub mod session;
 pub mod state;
+pub mod theme;
 pub mod white_balance;
 pub mod xmp;

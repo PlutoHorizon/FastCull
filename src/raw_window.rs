@@ -165,6 +165,9 @@ struct Open {
 }
 enum Message {
     Open(Open),
+    // The prewarm request only exists on Windows, where the editor process is
+    // started ahead of time; the macOS build never constructs it.
+    #[cfg_attr(not(windows), allow(dead_code))]
     Prewarm,
     Drain(mpsc::Sender<std::result::Result<(), String>>),
 }
@@ -639,6 +642,7 @@ fn load(
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         crate::appearance::sync_native_theme(ctx);
+        fastcull::theme::refresh(ctx);
         let mut resumed = false;
         if let Some(server) = &self.server {
             match server.try_recv() {

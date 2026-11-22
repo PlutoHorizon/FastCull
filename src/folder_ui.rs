@@ -1,4 +1,5 @@
-use eframe::egui::{self, Color32, Vec2};
+use eframe::egui::{self, Vec2};
+use fastcull::theme;
 use fastcull::{
     organizing::{Node, Plan},
     session::Session,
@@ -268,7 +269,7 @@ impl Editor {
         ui.add(
             egui::TextEdit::singleline(&mut self.query)
                 .id(egui::Id::new("folder-search"))
-                .hint_text("筛选文件夹")
+                .hint_text(theme::placeholder("筛选文件夹"))
                 .desired_width(f32::INFINITY),
         );
         changed |= ui.checkbox(&mut self.recursive, "包含子文件夹").changed();
@@ -388,7 +389,7 @@ impl Editor {
             }
         }
         if let Some(error) = &self.error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
+            ui.colored_label(theme::danger(), error);
         }
         changed
     }
@@ -461,8 +462,8 @@ impl Editor {
         let painter = ui.painter_at(rect);
         let count = painter.layout_no_wrap(
             node.count.to_string(),
-            egui::FontId::proportional(12.),
-            visuals.text_color(),
+            theme::font(theme::FS_SMALL),
+            theme::text_muted(),
         );
         let count_pos = egui::pos2(
             rect.right() - 4. - count.size().x,
@@ -476,16 +477,16 @@ impl Editor {
         painter.rect_filled(
             egui::Rect::from_min_size(icon - Vec2::new(0., 3.), Vec2::new(7., 4.)),
             1.,
-            crate::appearance::palette(ui.ctx()).muted,
+            theme::text_muted(),
         );
         painter.rect_filled(
             egui::Rect::from_min_size(icon, Vec2::new(14., 9.)),
             1.,
-            crate::appearance::palette(ui.ctx()).muted,
+            theme::text_secondary(),
         );
         let mut job = egui::text::LayoutJob::simple(
             label,
-            egui::FontId::proportional(14.),
+            theme::font(theme::FS_LABEL),
             visuals.text_color(),
             (name_right - rect.left() - 24.).max(1.),
         );
@@ -528,9 +529,9 @@ impl Editor {
                 egui::Stroke::new(
                     1.,
                     if allowed {
-                        Color32::LIGHT_BLUE
+                        theme::accent()
                     } else {
-                        Color32::LIGHT_RED
+                        theme::danger()
                     },
                 ),
                 egui::StrokeKind::Inside,
@@ -583,13 +584,17 @@ impl Editor {
             ui.set_max_width(ui.available_width());
             ui.spacing_mut().item_spacing = Vec2::new(10., 10.);
             ui.spacing_mut().interact_size.y = 34.;
-            for (style, size) in [(egui::TextStyle::Heading, 22.), (egui::TextStyle::Body, 16.), (egui::TextStyle::Button, 16.)] {
-                ui.style_mut().text_styles.insert(style, egui::FontId::proportional(size));
+            for (style, size) in [
+                (egui::TextStyle::Heading, theme::FS_DISPLAY),
+                (egui::TextStyle::Body, theme::FS_BODY),
+                (egui::TextStyle::Button, theme::FS_BODY),
+            ] {
+                ui.style_mut().text_styles.insert(style, theme::font(size));
             }
             match &mut dialog {
                 Dialog::New { parent, name } => {
                     ui.heading("新建文件夹"); ui.label(parent.display().to_string());
-                    ui.add(egui::TextEdit::singleline(name).id(egui::Id::new("new-folder-name")).hint_text("文件夹名称").desired_width(f32::INFINITY));
+                    ui.add(egui::TextEdit::singleline(name).id(egui::Id::new("new-folder-name")).hint_text(theme::placeholder("文件夹名称")).desired_width(f32::INFINITY));
                     ui.horizontal(|ui| {
                         if ui.button("创建").clicked() {
                             match self.create_folder(parent, name) {
@@ -618,7 +623,7 @@ impl Editor {
                         }).response.on_hover_text(target.display().to_string());
                     if self.direct {
                         let mut text = target.display().to_string();
-                        if ui.add(egui::TextEdit::singleline(&mut text).id(egui::Id::new("move-target-path")).hint_text("也可粘贴其他目标文件夹路径").desired_width(f32::INFINITY)).changed() {
+                        if ui.add(egui::TextEdit::singleline(&mut text).id(egui::Id::new("move-target-path")).hint_text(theme::placeholder("也可粘贴其他目标文件夹路径")).desired_width(f32::INFINITY)).changed() {
                             *target = PathBuf::from(text.trim_matches('"'));
                         }
                     }
@@ -658,7 +663,7 @@ impl Editor {
                     if ui.button("返回").clicked() { close = true; }
                 }
             }
-            if let Some(e) = &self.error { ui.colored_label(ui.visuals().error_fg_color, e); }
+            if let Some(e) = &self.error { ui.colored_label(theme::danger(), e); }
         });
         if !close {
             self.dialog = Some(dialog);

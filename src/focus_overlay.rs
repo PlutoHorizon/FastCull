@@ -61,8 +61,10 @@ impl Overlay {
         self.cache.insert(path, State::Ready(info));
     }
     pub fn control(&mut self, ui: &mut egui::Ui) {
+        // A quiet toggle that lights up while the overlay is on.
+        let button = fastcull::theme::toggle("对焦点", self.enabled);
         if ui
-            .add(egui::Button::new("对焦点").selected(self.enabled))
+            .add(button)
             .on_hover_text("显示照片中记录的对焦点或对焦框（O）；随旋转、裁切、缩放和拖动对齐。相机未记录或格式不支持时会提示。")
             .clicked()
         {
@@ -190,7 +192,7 @@ impl Overlay {
         let pos = viewport.left_top() + Vec2::new(12., 34.);
         let galley = painter.layout_no_wrap(
             message,
-            egui::FontId::proportional(13.),
+            fastcull::theme::font(fastcull::theme::FS_BODY),
             Color32::LIGHT_GREEN,
         );
         painter.rect_filled(

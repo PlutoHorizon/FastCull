@@ -720,6 +720,7 @@ dependencies = [
  "libloading",
  "log",
  "objc2 0.6.5",
+ "objc2-core-graphics",
  "png",
  "pollster",
  "quick-xml 0.38.4",

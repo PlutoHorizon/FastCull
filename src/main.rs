@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
-mod appearance;
+use fastcull::appearance;
+
 mod bridge_list;
 mod cache;
 mod crop_ui;

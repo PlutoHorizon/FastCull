@@ -7,12 +7,11 @@ use fastcull::{
     arw::ArwInfo,
     imaging::Level,
     session::Session,
-    state,
+    state, theme,
     xmp::{Updates, Values},
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
 
-const RED: Color32 = Color32::from_rgb(201, 79, 79);
 const COLORS: [(&str, Color32); 5] = [
     ("Red", Color32::from_rgb(206, 75, 66)),
     ("Yellow", Color32::from_rgb(226, 185, 55)),
@@ -1299,10 +1298,14 @@ impl App {
                 });
                 let (area, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-                self.compare_sizes[side] = area.size();
+                // The photo keeps a margin inside the pane. Everything that
+                // reads the pane size - the fit zoom and the pan limits - uses
+                // the same area, so the linked zoom and pan stay in step.
+                let photo_area = area.shrink(theme::SP_M);
+                self.compare_sizes[side] = photo_area.size();
                 self.fit_edge = preview_edge(area.size(), ctx.pixels_per_point());
                 let painter = ui.painter_at(area);
-                painter.rect_filled(area, 0., crate::appearance::palette(ctx).canvas);
+                painter.rect_filled(area, 0., theme::canvas());
                 self.request(i, Level::Fit(self.fit_edge));
                 let mut view = self.compare.as_ref().unwrap().views[side];
                 if view.zoom > 0. {
@@ -1330,8 +1333,8 @@ impl App {
                     view = self.compare.as_ref().unwrap().views[side];
                     let size = self.displayed_size(i, source.unwrap_or_else(|| t.size_vec2()));
                     let native_size = size;
-                    let fit_zoom = (area.width() / native_size.x)
-                        .min(area.height() / native_size.y)
+                    let fit_zoom = (photo_area.width() / native_size.x)
+                        .min(photo_area.height() / native_size.y)
                         * ctx.pixels_per_point();
                     let wheel = if response.hovered() {
                         ctx.input(|input| input.smooth_scroll_delta.y)
@@ -1379,18 +1382,22 @@ impl App {
                     }
                     view = self.compare.as_ref().unwrap().views[side];
                     let actual_zoom = view.zoom;
-                    let screen = paint_adjusted(
-                        &painter,
+                    let layout = photo_layout(
                         &t,
-                        area,
+                        photo_area,
                         self.photos[i].orientation(),
-                        actual_zoom,
-                        view.pan * native_size * actual_zoom / ctx.pixels_per_point(),
-                        ctx.pixels_per_point(),
+                        PhotoView {
+                            zoom: actual_zoom,
+                            pan: view.pan * native_size * actual_zoom / ctx.pixels_per_point(),
+                            ppp: ctx.pixels_per_point(),
+                        },
                         self.source_size(i, actual_zoom > 0.),
-                        self.preview_for(i),
                         self.photos[i].values.crop,
                     );
+                    paint_photo_shadow(&painter, layout.rect);
+                    paint_photo(&painter, &t, area, &layout, self.preview_for(i));
+                    paint_photo_edge(&painter, area, layout.rect);
+                    let screen = layout.rect;
                     self.focus_overlay.paint(
                         &painter,
                         &self.paths[i],
@@ -1401,29 +1408,31 @@ impl App {
                         self.photos[i].values.crop.unwrap_or_default(),
                     );
                     if view.zoom > 0. && !loaded_full {
-                        painter.text(
+                        status_plate(
+                            &painter,
                             area.left_top() + Vec2::splat(12.),
-                            egui::Align2::LEFT_TOP,
+                            StatusAnchor::TopLeft,
                             "正在加载大图…",
-                            egui::FontId::proportional(14.),
-                            Color32::WHITE,
+                            theme::FS_LABEL,
+                            theme::text(),
                         );
                     }
                 } else {
                     let error = self.photos[i].image_errors.get(&Level::Fit(self.fit_edge));
-                    painter.text(
+                    status_plate(
+                        &painter,
                         area.center(),
-                        egui::Align2::CENTER_CENTER,
+                        StatusAnchor::Center,
                         error.map_or("正在加载预览…", String::as_str),
-                        egui::FontId::proportional(16.),
-                        crate::appearance::palette(ctx).muted,
+                        theme::FS_TITLE,
+                        theme::text(),
                     );
                 }
                 if self.compare.as_ref().unwrap().active == side {
                     painter.rect_stroke(
                         area,
                         0.,
-                        Stroke::new(2., crate::appearance::palette(ctx).accent),
+                        Stroke::new(2., theme::accent()),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -1477,139 +1486,173 @@ impl App {
                     .as_deref()
                     .unwrap_or("")
                     == value;
+                // Pick and reject are the two decisive actions, so they carry
+                // the semantic colour; only the flag that is actually set gets
+                // the solid fill, and clearing the flag stays a quiet button.
+                let button = match value {
+                    "pick" => theme::flag_action(label, theme::success(), selected),
+                    "reject" => theme::flag_action(label, theme::danger(), selected),
+                    _ => theme::secondary(label),
+                };
                 if ui
-                    .add_enabled(enabled, egui::Button::new(label).selected(selected))
+                    .add_enabled(enabled, button)
                     .on_hover_text(hint)
                     .clicked()
                 {
                     self.flag(value);
                 }
             }
-            ui.separator();
-            control_group(ui, 126., |ui| {
+            group_divider(ui);
+            control_group(ui, |ui| {
                 let mut rating = self.photos[self.current].values.rating.unwrap_or(0);
                 if rating_control(ui, &mut rating, enabled) {
                     self.rating(rating);
                 }
             });
-            ui.separator();
-            control_group(ui, 120., |ui| {
-                for ((label, color), name) in COLORS.into_iter().zip([
+            group_divider(ui);
+            // The chips are a nested group, and egui cannot wrap one: a group
+            // wider than the rest of the row is cut off at the window edge
+            // instead of moving down to the next line. Measuring the group
+            // first lets the row wrap it as a whole.
+            let chips: Vec<(bool, Color32, &'static str)> = COLORS
+                .iter()
+                .zip([
                     "红色（6）",
                     "黄色（7）",
                     "绿色（8）",
                     "蓝色（9）",
                     "紫色",
-                ]) {
-                    let selected = self.photos[self.current]
-                        .values
-                        .label
-                        .as_deref()
-                        .is_some_and(|v| v.eq_ignore_ascii_case(label));
-                    if ui
-                        .add_enabled_ui(enabled, |ui| {
-                            let (rect, response) =
-                                ui.allocate_exact_size(Vec2::splat(20.), egui::Sense::click());
-                            let painter = ui.painter();
-                            painter.circle_filled(
-                                rect.center(),
-                                6.,
-                                color.gamma_multiply(if enabled { 1. } else { 0.4 }),
-                            );
-                            if selected || response.hovered() {
-                                painter.circle_stroke(
-                                    rect.center(),
-                                    9.,
-                                    Stroke::new(
-                                        1.5,
-                                        if selected {
-                                            crate::appearance::palette(ui.ctx()).accent
-                                        } else {
-                                            crate::appearance::palette(ui.ctx()).muted
-                                        },
-                                    ),
-                                );
-                            }
-                            response.on_hover_cursor(egui::CursorIcon::PointingHand)
-                        })
-                        .inner
-                        .on_hover_text(name)
+                ])
+                .map(|((label, color), name)| {
+                    (
+                        self.photos[self.current]
+                            .values
+                            .label
+                            .as_deref()
+                            .is_some_and(|v| v.eq_ignore_ascii_case(label)),
+                        *color,
+                        name,
+                    )
+                })
+                .collect();
+            let chip_width = measure_group(
+                ui.ctx(),
+                ui.spacing(),
+                "fastcull-measure-colors",
+                |ui| {
+                    for (selected, color, _) in &chips {
+                        colour_chip(ui, enabled, *color, *selected);
+                    }
+                },
+            );
+            control_group_sized(ui, chip_width, |ui| {
+                for ((selected, color, name), (label, _)) in chips.iter().zip(COLORS) {
+                    if colour_chip(ui, enabled, *color, *selected)
+                        .on_hover_text(*name)
                         .clicked()
                     {
                         self.label(label);
                     }
                 }
             });
-            ui.separator();
-            ui.menu_button("更多", |ui| {
-                if ui
-                    .add_enabled(enabled, egui::Button::new("向左旋转  ["))
-                    .clicked()
-                {
-                    self.rotate(-1);
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(enabled, egui::Button::new("向右旋转  ]"))
-                    .clicked()
-                {
-                    self.rotate(1);
-                    ui.close();
-                }
-                ui.separator();
-                if ui
-                    .add_enabled(
-                        !self.visible.is_empty(),
-                        egui::Button::new("重试当前照片  R"),
-                    )
-                    .clicked()
-                {
-                    self.retry_current();
-                    ui.close();
-                }
-                if ui.button("打开日志  L").clicked() {
-                    let _ = fastcull::platform::open_directory(&crate::logger::directory());
-                    ui.close();
-                }
-            });
+            group_divider(ui);
+            // The overflow menu belongs at the far end of the row: the row is
+            // a strip of tools, and its last tool sits on the edge.
+            let more = "更多";
+            let more_width = ui
+                .painter()
+                .layout_no_wrap(
+                    more.to_owned(),
+                    theme::font(theme::FS_BODY),
+                    theme::text_secondary(),
+                )
+                .size()
+                .x
+                + theme::SP_S * 2.
+                + 2.;
+            let spacer = (ui.max_rect().right() - ui.cursor().left() - more_width).max(0.);
+            ui.add_space(spacer);
+            let _ = egui::containers::menu::MenuButton::from_button(theme::secondary(more)).ui(
+                ui,
+                |ui| {
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("向左旋转  ["))
+                        .clicked()
+                    {
+                        self.rotate(-1);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("向右旋转  ]"))
+                        .clicked()
+                    {
+                        self.rotate(1);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            !self.visible.is_empty(),
+                            egui::Button::new("重试当前照片  R"),
+                        )
+                        .clicked()
+                    {
+                        self.retry_current();
+                        ui.close();
+                    }
+                    if ui.button("打开日志  L").clicked() {
+                        let _ = fastcull::platform::open_directory(&crate::logger::directory());
+                        ui.close();
+                    }
+                },
+            );
         });
         ui.horizontal_wrapped(|ui| {
+            let single = !self.grid && self.compare.is_none();
+            let single_button = if single {
+                theme::secondary_selected("单图 E")
+            } else {
+                theme::secondary("单图 E")
+            };
             if ui
-                .add(egui::Button::new("单图 E").selected(!self.grid && self.compare.is_none()))
+                .add(single_button)
                 .on_hover_text("单图浏览（E）")
                 .clicked()
             {
                 self.grid = false;
                 self.compare = None;
             }
-            if ui
-                .add(egui::Button::new("网格 G").selected(self.grid))
-                .on_hover_text("网格浏览（G）")
-                .clicked()
-            {
+            let grid_button = if self.grid {
+                theme::secondary_selected("网格 G")
+            } else {
+                theme::secondary("网格 G")
+            };
+            if ui.add(grid_button).on_hover_text("网格浏览（G）").clicked() {
                 self.grid = true;
                 self.grid_scroll = true;
             }
+            let compare_button = if !self.grid && self.compare.is_some() {
+                theme::secondary_selected("对比 C")
+            } else {
+                theme::secondary("对比 C")
+            };
             if ui
-                .add_enabled(
-                    self.visible.len() >= 2,
-                    egui::Button::new("对比 C").selected(!self.grid && self.compare.is_some()),
-                )
+                .add_enabled(self.visible.len() >= 2, compare_button)
                 .on_hover_text("选择当前照片和另一张进行对比（C）")
                 .clicked()
             {
                 self.enter_compare();
             }
-            ui.separator();
+            group_divider(ui);
             if ui
-                .add_enabled(!self.visible.is_empty(), egui::Button::new("◀"))
+                .add_enabled(!self.visible.is_empty(), theme::secondary("◀"))
                 .on_hover_text("上一张（←）")
                 .clicked()
             {
                 self.next(-1);
             }
             if ui
-                .add_enabled(!self.visible.is_empty(), egui::Button::new("▶"))
+                .add_enabled(!self.visible.is_empty(), theme::secondary("▶"))
                 .on_hover_text("下一张（→）")
                 .clicked()
             {
@@ -1621,46 +1664,77 @@ impl App {
                     ui.checkbox(&mut c.linked, "联动").on_hover_text(
                         "保留各自对准的位置，按相同比例缩放和移动；取消后可分别对准主体",
                     );
-                } else if ui
-                    .button(if self.zoom { "100%" } else { "适配" })
-                    .on_hover_text("适配 / 100%（F）")
-                    .clicked()
-                {
-                    self.set_zoom(!self.zoom);
-                }
-            }
-            ui.separator();
-            control_group(ui, 200., |ui| {
-                ui.label("曝光");
-                let baseline = self.photos[self.current].exposure_base;
-                let available = baseline.is_some() && enabled && self.exposure_preview.is_some();
-                for (label, thirds) in [("−1", -3), ("−⅓", -1), ("+⅓", 1), ("+1", 3)] {
+                } else {
+                    let label = if self.zoom { "100%" } else { "适配" };
                     if ui
-                        .add_enabled(available, egui::Button::new(label).small())
-                        .on_hover_text("曝光快调；JPEG 为近似预览，写回 LR 请同步选片会话")
-                        .on_disabled_hover_text("等待有效曝光参数或 GPU 预览")
+                        .add(theme::toggle(label, self.zoom))
+                        .on_hover_text("适配 / 100%（F）")
                         .clicked()
                     {
+                        self.set_zoom(!self.zoom);
+                    }
+                }
+            }
+            // The group is measured before it is placed: a nested group asks
+            // for the whole remaining width, so one that does not fit would be
+            // cut off at the window edge instead of moving to the next row.
+            // The rule in front of the group travels with it, so a group that
+            // moves down does not leave a dangling separator behind.
+            let width = measure_group(ui.ctx(), ui.spacing(), "fastcull-measure-exposure", |ui| {
+                group_divider(ui);
+                self.exposure_controls(ui, enabled);
+            });
+            // The exposure group sits at the far end of the row, opposite the
+            // viewing controls: the row reads as two ends, not as a list.
+            let spacer = (ui.max_rect().right() - ui.cursor().left() - width - 8.).max(0.);
+            ui.add_space(spacer);
+            control_group_sized(ui, width, |ui| {
+                group_divider(ui);
+                let buttons = self.exposure_controls(ui, enabled);
+                for (response, thirds) in buttons.iter().zip([-3, -1, 1, 3]) {
+                    if response.clicked() {
                         self.adjust_exposure(thirds);
                     }
                 }
-                if self.visible.is_empty() {
-                    ui.weak("—");
-                } else if let Some(e) = self.photos[self.current]
-                    .values
-                    .exposure
-                    .or(baseline)
-                    .filter(|_| baseline.is_some())
-                {
-                    ui.monospace(format!("{:+.2}", e as f64 / 1_000_000.))
-                        .on_hover_text("曝光值（EV）");
-                } else {
-                    ui.weak("等待参数").on_hover_text(
-                        "等待 LR 的有效曝光参数；旧处理版本或未解析的自动曝光可能不可用",
-                    );
-                }
             });
         });
+    }
+    /// The exposure buttons and the readout.
+    ///
+    /// The buttons are built apart from the click handling so the toolbar can
+    /// measure the group before it places it; only the real pass may change
+    /// the photo.
+    fn exposure_controls(&self, ui: &mut egui::Ui, enabled: bool) -> Vec<egui::Response> {
+        ui.label("曝光");
+        let baseline = self.photos[self.current].exposure_base;
+        let available = baseline.is_some() && enabled && self.exposure_preview.is_some();
+        let mut buttons = Vec::new();
+        for label in ["−1", "−⅓", "+⅓", "+1"] {
+            buttons.push(
+                ui.add_enabled(available, theme::secondary(label).small())
+                    .on_hover_text("曝光快调；JPEG 为近似预览，写回 LR 请同步选片会话")
+                    .on_disabled_hover_text("等待有效曝光参数或 GPU 预览"),
+            );
+        }
+        if self.visible.is_empty() {
+            ui.weak("—");
+        } else if let Some(e) = self.photos[self.current]
+            .values
+            .exposure
+            .or(baseline)
+            .filter(|_| baseline.is_some())
+        {
+            // The token table puts the exposure readout on WARNING, so it
+            // reads as a value instead of body copy.
+            ui.monospace(
+                egui::RichText::new(format!("{:+.2}", e as f64 / 1_000_000.)).color(theme::warning()),
+            )
+            .on_hover_text("曝光值（EV）");
+        } else {
+            ui.weak("等待参数")
+                .on_hover_text("等待 LR 的有效曝光参数；旧处理版本或未解析的自动曝光可能不可用");
+        }
+        buttons
     }
     fn cell(&mut self, ui: &mut egui::Ui, i: usize, size: Vec2, film: bool) {
         self.request(i, Level::Thumb);
@@ -1672,39 +1746,72 @@ impl App {
         }
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(
-            rect,
-            5.,
-            if i == self.current || self.folder_editor.photos.contains(&i) {
-                crate::appearance::palette(ui.ctx()).selected
+        let current = i == self.current;
+        let picked = self.folder_editor.photos.contains(&i);
+        // The mat behind the photo. A grid cell needs one to carry the file
+        // name; in the filmstrip the photo stands on its own, the way it does
+        // on the canvas.
+        let mat = if !film {
+            // A grid cell needs a panel for the file name.
+            if current {
+                theme::accent_soft()
             } else {
-                crate::appearance::palette(ui.ctx()).rail
-            },
-        );
-        if i == self.current {
-            painter.rect_stroke(
-                rect.shrink(1.),
-                5.,
-                Stroke::new(2., crate::appearance::palette(ui.ctx()).accent),
-                egui::StrokeKind::Inside,
-            );
+                theme::surface_2()
+            }
+        } else if picked {
+            theme::surface_2()
+        } else {
+            // In the filmstrip the photo stands on the panel itself, the way
+            // it does on the canvas.
+            Color32::TRANSPARENT
+        };
+        if mat != Color32::TRANSPARENT {
+            painter.rect_filled(rect, theme::radius(theme::RADIUS_PHOTO), mat);
         }
         let image_rect = Rect::from_min_max(
             rect.min + Vec2::splat(5.),
             Pos2::new(rect.max.x - 5., rect.max.y - if film { 18. } else { 48. }),
         );
+        // What sits behind the photo decides the colour of the rounded
+        // corners that are painted over the image.
+        let behind = if mat == Color32::TRANSPARENT {
+            theme::surface()
+        } else {
+            mat
+        };
+        // The thumbnail is the same material as the photo on the canvas: a
+        // rounded rectangle with a hairline and a soft shadow under it. The
+        // shadow, the corners and the selection ring all follow the photo
+        // itself, not the box it is fitted into, so a portrait shot in a
+        // landscape cell still gets a ring that hugs it.
         let thumb = self.thumbs.get(i).or_else(|| self.fast_thumbs.get(i));
+        let mut painted = image_rect;
         if let Some(t) = thumb {
-            paint_image(
-                &painter,
+            let layout = photo_layout(
                 &t,
                 image_rect,
                 self.photos[i].orientation(),
-                self.photos[i].values.crop,
+                PhotoView {
+                    zoom: 0.,
+                    pan: Vec2::ZERO,
+                    ppp: 1.,
+                },
                 // The thumbnail's image plane must stay stable as full images
                 // arrive/leave the cache (their aspect ratios may differ).
                 None,
+                self.photos[i].values.crop,
             );
+            painted = layout.rect;
+            painter.add(
+                egui::epaint::Shadow {
+                    offset: [0, 2],
+                    blur: 9,
+                    spread: 0,
+                    color: theme::card_shadow(),
+                }
+                .as_shape(painted, theme::radius(theme::RADIUS_PHOTO)),
+            );
+            paint_photo(&painter, &t, image_rect, &layout, None);
         } else {
             painter.text(
                 image_rect.center(),
@@ -1714,18 +1821,41 @@ impl App {
                 } else {
                     "…"
                 },
-                egui::FontId::proportional(13.),
-                crate::appearance::palette(ui.ctx()).muted,
+                theme::font(theme::FS_BODY),
+                theme::text_muted(),
+            );
+        }
+        round_image_corners(
+            &painter,
+            painted,
+            theme::RADIUS_PHOTO,
+            &|_corner, _ex, _ey| Some(behind),
+        );
+        if current {
+            painter.rect_stroke(
+                painted.shrink(1.),
+                theme::radius(theme::RADIUS_PHOTO),
+                Stroke::new(2., theme::accent()),
+                egui::StrokeKind::Inside,
+            );
+        } else if response.hovered() {
+            // A thumbnail has no other hover cue, so the pointer needs one to
+            // say which one it is over.
+            painter.rect_stroke(
+                painted.shrink(1.),
+                theme::radius(theme::RADIUS_PHOTO),
+                Stroke::new(1., theme::accent()),
+                egui::StrokeKind::Inside,
             );
         }
         if self.photos[i].values.flag.as_deref() == Some("reject") {
             painter.line_segment(
                 [image_rect.left_top(), image_rect.right_bottom()],
-                Stroke::new(2., RED),
+                Stroke::new(2., theme::danger()),
             );
             painter.line_segment(
                 [image_rect.right_top(), image_rect.left_bottom()],
-                Stroke::new(2., RED),
+                Stroke::new(2., theme::danger()),
             );
         }
         let photo = &self.photos[i];
@@ -1734,14 +1864,30 @@ impl App {
             Some("reject") => "X ",
             _ => "",
         };
-        let stars = "★".repeat(photo.values.rating.unwrap_or(0) as usize);
+        let flag_color = match flag {
+            "P " => theme::success(),
+            "X " => theme::danger(),
+            _ => theme::text_secondary(),
+        };
+        let stars = photo.values.rating.unwrap_or(0) as usize;
+        let baseline = Pos2::new(rect.min.x + 5., rect.max.y - if film { 14. } else { 39. });
         painter.text(
-            Pos2::new(rect.min.x + 5., rect.max.y - if film { 14. } else { 39. }),
+            baseline,
             egui::Align2::LEFT_TOP,
-            format!("{flag}{stars}"),
-            egui::FontId::proportional(11.),
-            crate::appearance::palette(ui.ctx()).text,
+            flag,
+            theme::font(theme::FS_CAPTION),
+            flag_color,
         );
+        // The stars follow the flag as a row of marks, not as text.
+        for n in 0..stars {
+            draw_star(
+                &painter,
+                baseline + Vec2::new(12. + n as f32 * 8., 7.),
+                3.5,
+                true,
+                theme::star(),
+            );
+        }
         if let Some((_, color)) = COLORS.iter().find(|(l, _)| {
             photo
                 .values
@@ -1754,7 +1900,7 @@ impl App {
                     Pos2::new(rect.max.x - 10., rect.max.y - 13.),
                     Vec2::splat(6.),
                 ),
-                0.,
+                theme::radius(theme::RADIUS_SM),
                 *color,
             );
         }
@@ -1767,8 +1913,8 @@ impl App {
                 Pos2::new(rect.min.x + 5., rect.max.y - 20.),
                 egui::Align2::LEFT_TOP,
                 name,
-                egui::FontId::proportional(12.),
-                crate::appearance::palette(ui.ctx()).text,
+                theme::font(theme::FS_SMALL),
+                theme::text_secondary(),
             );
         }
         if response.clicked() {
@@ -1794,8 +1940,8 @@ impl App {
                 rect.center_top() + Vec2::new(0., 5.),
                 egui::Align2::CENTER_TOP,
                 "移动中",
-                egui::FontId::proportional(12.),
-                crate::appearance::palette(ui.ctx()).accent,
+                theme::font(theme::FS_SMALL),
+                theme::accent(),
             );
         }
     }
@@ -1814,8 +1960,23 @@ impl App {
             )
             .resizable(true)
             .default_height(initial_height)
-            .height_range(76. ..=(ctx.content_rect().height() * 0.35).clamp(94., 260.))
-            .show(ctx, |ui| self.film(ui))
+            .height_range(84. ..=(ctx.content_rect().height() * 0.35).clamp(104., 280.))
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::raised())
+                    .inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 8 }),
+            )
+            .show(ctx, |ui| {
+                ui.add_space(8.);
+                self.film(ui);
+                // The tray begins in a hairline: it is a shelf of its own.
+                let rect = ui.max_rect();
+                ui.painter().hline(
+                    rect.x_range(),
+                    rect.top() + 0.5,
+                    Stroke::new(1., theme::line()),
+                );
+            })
             .response
             .rect
     }
@@ -2039,7 +2200,7 @@ impl App {
                 ui.weak("应用后保存到 XMP，可随时重新裁切");
             });
             if let Some(e) = &self.error {
-                ui.colored_label(RED, e);
+                ui.colored_label(theme::danger(), e);
             }
         });
         egui::SidePanel::right("crop-controls")
@@ -2052,8 +2213,8 @@ impl App {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(crate::appearance::palette(ctx).canvas)
-                    .inner_margin(16.),
+                    .fill(theme::canvas())
+                    .inner_margin(theme::SP_L),
             )
             .show(ctx, |ui| {
                 let (area, response) =
@@ -2097,20 +2258,65 @@ impl App {
         }
     }
     fn central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // The canvas is the darkest surface in the window, and it carries a
+        // slow gradient so the picture has something to stand on.
+        paint_canvas(ui.painter(), ui.max_rect());
         if self.compare.is_some() && !self.visible.is_empty() && !self.grid {
             self.compare_canvas(ui, ctx);
             return;
         }
         if self.visible.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label("没有符合当前条件的照片。可以清除或调整筛选条件。");
+            // The empty state is a card with a way out, not a line of text in
+            // an empty window.
+            let size = Vec2::new(360., 150.);
+            let (rect, _response) = ui
+                .centered_and_justified(|ui| {
+                    ui.allocate_exact_size(size, egui::Sense::hover())
+                })
+                .inner;
+            ui.painter()
+                .rect_filled(rect, theme::radius(theme::RADIUS), theme::surface_2());
+            ui.painter().rect_stroke(
+                rect,
+                theme::radius(theme::RADIUS),
+                Stroke::new(1., theme::line()),
+                egui::StrokeKind::Inside,
+            );
+            let mut clear = false;
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(22.);
+                    ui.label(
+                        egui::RichText::new("没有符合当前条件的照片")
+                            .size(theme::FS_LABEL)
+                            .color(theme::text()),
+                    );
+                    ui.label(
+                        egui::RichText::new("清除筛选条件后即可重新浏览这一批照片。")
+                            .size(theme::FS_SMALL)
+                            .color(theme::text_secondary()),
+                    );
+                    ui.add_space(14.);
+                    if ui.add(theme::primary("清除筛选条件")).clicked() {
+                        clear = true;
+                    }
+                });
             });
+            if clear {
+                self.filter_editor.clear(&mut self.filters);
+                self.filter_dirty = true;
+            }
             return;
         }
         if self.grid {
-            self.pending_focus = None;
-            let cols = 6;
-            let width = (ui.available_width() / cols as f32 - 4.).max(32.);
+            // The column count follows the available width: a fixed six turned
+            // the cells into narrow strips in a small window, so the
+            // thumbnails shrank to colour blocks and the labels were cut.
+            let available = ui.available_width();
+            let cols = ((available / 140.).floor() as usize).clamp(1, 6);
+            let width = (available / cols as f32 - 4.).max(32.);
+            let height = (width * 1.37).clamp(150., 220.);
+            let row_height = height + 4.;
             let mut area = egui::ScrollArea::vertical().id_salt("grid");
             if self.grid_scroll {
                 let position = self
@@ -2118,19 +2324,24 @@ impl App {
                     .iter()
                     .position(|i| *i == self.current)
                     .unwrap_or(0);
-                area = area.vertical_scroll_offset((position / cols) as f32 * 224.);
+                area = area.vertical_scroll_offset((position / cols) as f32 * row_height);
                 self.grid_scroll = false;
             }
-            area.show_rows(ui, 220., self.visible.len().div_ceil(cols), |ui, rows| {
-                for row in rows {
-                    ui.horizontal(|ui| {
-                        for position in row * cols..((row + 1) * cols).min(self.visible.len()) {
-                            let i = self.visible[position];
-                            self.cell(ui, i, Vec2::new(width, 220.), false);
-                        }
-                    });
-                }
-            });
+            area.show_rows(
+                ui,
+                row_height,
+                self.visible.len().div_ceil(cols),
+                |ui, rows| {
+                    for row in rows {
+                        ui.horizontal(|ui| {
+                            for position in row * cols..((row + 1) * cols).min(self.visible.len()) {
+                                let i = self.visible[position];
+                                self.cell(ui, i, Vec2::new(width, height), false);
+                            }
+                        });
+                    }
+                },
+            );
             return;
         }
         let (rect, response) =
@@ -2142,7 +2353,8 @@ impl App {
             self.request(self.current, Level::Full);
         }
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0., crate::appearance::palette(ctx).canvas);
+        // The window base is painted once, over everything, so the photo
+        // stands on the same surface the cards float on.
         let full = self.full.get(self.current);
         let actual_full = full.is_some();
         let native = self.source_size(self.current, self.zoom);
@@ -2161,18 +2373,27 @@ impl App {
             }
             let shown = self.displayed_size(self.current, native.unwrap_or_else(|| t.size_vec2()))
                 / ctx.pixels_per_point();
-            let screen = paint_adjusted(
-                &painter,
+            // The photo keeps a generous margin inside the canvas. The dark
+            // around it is what makes it read as a print on a table.
+            let margin = (rect.height() * 0.055).clamp(10., 34.);
+            let photo_area = rect.shrink(margin);
+            let layout = photo_layout(
                 &t,
-                rect,
+                photo_area,
                 self.photos[self.current].orientation(),
-                if self.zoom { 1. } else { 0. },
-                self.pan * shown,
-                ctx.pixels_per_point(),
+                PhotoView {
+                    zoom: if self.zoom { 1. } else { 0. },
+                    pan: self.pan * shown,
+                    ppp: ctx.pixels_per_point(),
+                },
                 native,
-                self.preview_for(self.current),
                 self.photos[self.current].values.crop,
             );
+            paint_photo_shadow(&painter, layout.rect);
+            paint_photo_glow(&painter, layout.rect);
+            paint_photo(&painter, &t, rect, &layout, self.preview_for(self.current));
+            paint_photo_edge(&painter, rect, layout.rect);
+            let screen = layout.rect;
             self.focus_overlay.paint(
                 &painter,
                 &self.paths[self.current],
@@ -2216,20 +2437,22 @@ impl App {
             .get(&Level::Fit(self.fit_edge))
             .cloned()
         {
-            painter.text(
+            status_plate(
+                &painter,
                 rect.center(),
-                egui::Align2::CENTER_CENTER,
-                format!("预览加载失败：{e}\n按 R 重试，或按右箭头继续选片"),
-                egui::FontId::proportional(16.),
-                RED,
+                StatusAnchor::Center,
+                &format!("预览加载失败：{e}\n按 R 重试，或按右箭头继续选片"),
+                theme::FS_TITLE,
+                theme::danger(),
             );
         } else {
-            painter.text(
+            status_plate(
+                &painter,
                 rect.center(),
-                egui::Align2::CENTER_CENTER,
+                StatusAnchor::Center,
                 "正在加载内嵌 JPEG…",
-                egui::FontId::proportional(16.),
-                crate::appearance::palette(ctx).muted,
+                theme::FS_TITLE,
+                theme::text(),
             );
         }
         if (self.zoom || self.crop_requested) && !actual_full {
@@ -2245,12 +2468,13 @@ impl App {
                     .to_owned(),
                     |e| format!("100% 加载失败：{e}；按 R 重试"),
                 );
-            painter.text(
+            status_plate(
+                &painter,
                 rect.left_top() + Vec2::splat(12.),
-                egui::Align2::LEFT_TOP,
-                message,
-                egui::FontId::proportional(14.),
-                Color32::YELLOW,
+                StatusAnchor::TopLeft,
+                &message,
+                theme::FS_LABEL,
+                theme::warning(),
             );
         }
         if !actual_full
@@ -2259,12 +2483,13 @@ impl App {
                 .image_errors
                 .get(&Level::Fit(self.fit_edge))
         {
-            painter.text(
+            status_plate(
+                &painter,
                 rect.left_bottom() - Vec2::new(-12., 24.),
-                egui::Align2::LEFT_BOTTOM,
-                format!("适屏预览失败：{e}；按 R 重试"),
-                egui::FontId::proportional(14.),
-                Color32::YELLOW,
+                StatusAnchor::BottomLeft,
+                &format!("适屏预览失败：{e}；按 R 重试"),
+                theme::FS_LABEL,
+                theme::warning(),
             );
         }
     }
@@ -2894,7 +3119,50 @@ impl App {
         ctx.request_repaint();
     }
 }
-fn control_group(ui: &mut egui::Ui, width: f32, controls: impl FnOnce(&mut egui::Ui)) {
+/// A group of related controls.
+///
+/// The group takes the width its content needs: a fixed width left holes in
+/// the toolbar whenever the content was narrower than the reservation.
+fn control_group(ui: &mut egui::Ui, controls: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.;
+        controls(ui);
+    });
+}
+
+/// Lay a toolbar group out off-screen to learn the width it needs.
+///
+/// egui cannot wrap a nested group: `ui.horizontal()` asks for the whole
+/// remaining width, so a group whose content is wider than the rest of the
+/// row is cut off at the window edge instead of moving to the next row.
+/// Measuring the group first lets the toolbar place it with the width it
+/// needs, and the toolbar can then move the whole group down.
+fn measure_group(
+    ctx: &egui::Context,
+    spacing: &egui::Spacing,
+    id: &'static str,
+    build: impl FnOnce(&mut egui::Ui),
+) -> f32 {
+    let rect = Rect::from_min_size(Pos2::new(-20_000., -20_000.), Vec2::new(10_000., 100.));
+    let mut ui = egui::Ui::new(
+        ctx.clone(),
+        egui::Id::new(id),
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center))
+            .style(ctx.style()),
+    );
+    *ui.spacing_mut() = spacing.clone();
+    ui.spacing_mut().item_spacing.x = 4.;
+    build(&mut ui);
+    ui.min_rect().width() + 1.
+}
+
+/// Place a toolbar group with the width it measured.
+///
+/// The group asks for its own width, so the toolbar can wrap it to the next
+/// row when the rest of the row is too narrow for it.
+fn control_group_sized(ui: &mut egui::Ui, width: f32, controls: impl FnOnce(&mut egui::Ui)) {
     ui.allocate_ui_with_layout(
         Vec2::new(width, ui.spacing().interact_size.y),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -2904,26 +3172,280 @@ fn control_group(ui: &mut egui::Ui, width: f32, controls: impl FnOnce(&mut egui:
         },
     );
 }
+
+/// A colour label chip.
+///
+/// An unset chip is a hollow square in the colour itself; a set one is filled
+/// and carries a check. The two states differ in shape and not only in shade,
+/// so the chip still reads without colour vision.
+fn colour_chip(ui: &mut egui::Ui, enabled: bool, color: Color32, selected: bool) -> egui::Response {
+    let color = if enabled {
+        color
+    } else {
+        color.gamma_multiply(0.45)
+    };
+    let chip = egui::Button::new("")
+        .fill(if selected {
+            color
+        } else {
+            color.gamma_multiply(0.16)
+        })
+        .stroke(if selected {
+            Stroke::NONE
+        } else {
+            Stroke::new(1., color.gamma_multiply(0.72))
+        })
+        .min_size(Vec2::splat(20.))
+        .corner_radius(theme::radius(theme::RADIUS_SM));
+    let response = ui.add_enabled(enabled, chip);
+    if selected {
+        let rect = response.rect;
+        ui.painter().add(egui::Shape::line(
+            vec![
+                rect.left_top() + Vec2::new(4.5, 10.5),
+                rect.left_top() + Vec2::new(8.5, 14.5),
+                rect.left_top() + Vec2::new(15.5, 5.5),
+            ],
+            Stroke::new(1.8, Color32::WHITE),
+        ));
+    }
+    response
+}
+
+/// A visible 1px rule between two toolbar groups, with 8px on each side.
+///
+/// `ui.separator()` draws its line in the non-interactive colour, which is
+/// almost invisible on the dark toolbar.
+fn group_divider(ui: &mut egui::Ui) {
+    let height = ui.spacing().interact_size.y;
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(1. + 2. * theme::SP_S, height),
+        egui::Sense::hover(),
+    );
+    let line = Rect::from_center_size(rect.center(), Vec2::new(1., height));
+    ui.painter().rect_filled(line, 0., theme::line_2());
+}
+/// Where a status plate is anchored.
+#[derive(Clone, Copy)]
+enum StatusAnchor {
+    /// The plate is centred on the anchor point.
+    Center,
+    /// The plate's top-left corner sits on the anchor point.
+    TopLeft,
+    /// The plate's bottom-left corner sits on the anchor point.
+    BottomLeft,
+}
+
+/// Paint a status message on a translucent rounded plate.
+///
+/// The messages sit on top of the photo, so plain text was unreadable on a
+/// bright frame. The plate keeps the text legible without hiding the image.
+fn status_plate(
+    painter: &egui::Painter,
+    at: Pos2,
+    anchor: StatusAnchor,
+    text: &str,
+    size: f32,
+    color: Color32,
+) {
+    let galley = painter.layout_no_wrap(text.to_owned(), theme::font(size), color);
+    let pad = Vec2::splat(8.);
+    let plate = galley.size() + pad * 2.;
+    let min = match anchor {
+        StatusAnchor::Center => at - plate / 2.,
+        StatusAnchor::TopLeft => at,
+        StatusAnchor::BottomLeft => at - Vec2::new(0., plate.y),
+    };
+    let rect = Rect::from_min_size(min, plate);
+    painter.rect_filled(rect, theme::RADIUS_SM, Color32::from_black_alpha(200));
+    painter.galley(rect.left_top() + pad, galley, color);
+}
+
+/// The height of the status bar at the foot of the filter panel.
+const SIDEBAR_FOOTER: f32 = 56.;
+
+/// The status bar at the foot of the filter panel.
+///
+/// The panel used to stop at the last facet and leave the rest of the card
+/// blank. The bar says how much of the set the current filters leave and how
+/// the photos are marked, and it carries the reset action next to the numbers
+/// it would undo. It returns whether the reset was asked for.
+fn sidebar_status(
+    ui: &mut egui::Ui,
+    status: SidebarStatus,
+    can_reset: bool,
+) -> bool {
+    let rect = ui.max_rect();
+    ui.painter().rect_filled(
+        Rect::from_min_size(rect.left_top(), Vec2::new(rect.width(), 1.)),
+        0.,
+        theme::line(),
+    );
+    // The bar has a fixed height, so the theme's item spacing would push the
+    // last row past the panel edge and clip it.
+    ui.spacing_mut().item_spacing.y = 0.;
+    ui.add_space(9.);
+    let mut reset = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!("显示 {} / {} 张", status.shown, status.total))
+                .size(theme::FS_BODY)
+                .color(theme::text()),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add_enabled(can_reset, theme::ghost_small("重置"))
+                .on_hover_text("清除全部筛选条件")
+                .clicked()
+            {
+                reset = true;
+            }
+        });
+    });
+    // The marks reuse the colours of the toolbar, so the two places that
+    // talk about a mark look the same. They are counts, so they take the
+    // small size and stay clear of the panel edge.
+    let mut job = egui::text::LayoutJob::default();
+    for (label, count, color) in [
+        ("拾取 ", status.picks, theme::success()),
+        ("   拒绝 ", status.rejects, theme::danger()),
+        ("   评分 ", status.rated, theme::star()),
+    ] {
+        egui::RichText::new(label)
+            .size(theme::FS_SMALL)
+            .color(theme::text_muted())
+            .append_to(
+                &mut job,
+                ui.style(),
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+        egui::RichText::new(count.to_string())
+            .size(theme::FS_SMALL)
+            .color(color)
+            .strong()
+            .append_to(
+                &mut job,
+                ui.style(),
+                egui::FontSelection::Default,
+                egui::Align::Center,
+            );
+    }
+    ui.add_space(2.);
+    ui.label(egui::WidgetText::from(job));
+    reset
+}
+
+/// What the filter panel's status bar reports.
+#[derive(Clone, Copy)]
+struct SidebarStatus {
+    /// How many photos the current filters leave.
+    shown: usize,
+    /// How many photos there are in all.
+    total: usize,
+    picks: usize,
+    rejects: usize,
+    rated: usize,
+}
+
+/// Draw a five-pointed star.
+///
+/// A star inside its own chip read as a row of five buttons. Drawn free of any
+/// frame it reads as a rating, and the empty slot keeps the row's rhythm.
+fn draw_star(painter: &egui::Painter, center: Pos2, radius: f32, filled: bool, color: Color32) {
+    let mut points = Vec::with_capacity(10);
+    for i in 0..10 {
+        let r = if i % 2 == 0 { radius } else { radius * 0.42 };
+        let angle = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.;
+        points.push(center + Vec2::new(r * angle.cos(), r * angle.sin()));
+    }
+    if filled {
+        // A star is concave, so it cannot be filled as a convex polygon: egui
+        // fans the triangles from the first point, and the five notches fill
+        // in with five flaps across the shape. The star is filled as a ring of
+        // triangles around its centre instead.
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(center, color);
+        for point in &points {
+            mesh.colored_vertex(*point, color);
+        }
+        for i in 0..points.len() {
+            let a = 1 + i as u32;
+            let b = 1 + ((i + 1) % points.len()) as u32;
+            mesh.indices.extend_from_slice(&[0, a, b]);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+        // The outline keeps the edge of the shape readable against a light
+        // surface.
+        let mut outline = points.clone();
+        outline.push(points[0]);
+        painter.add(egui::Shape::line(outline, Stroke::new(1., color)));
+    } else {
+        // The outline has to close: a polyline alone leaves the last edge
+        // open, which shows as a notch at the top point.
+        let mut outline = points.clone();
+        outline.push(points[0]);
+        painter.add(egui::Shape::line(outline, Stroke::new(1.0, color)));
+    }
+}
+
 pub(crate) fn rating_control(ui: &mut egui::Ui, rating: &mut u8, enabled: bool) -> bool {
     let before = *rating;
+    // Every star is a 22×22 chip, so the click target is visible in the
+    // toolbar instead of a bare glyph. A rated chip is filled with ACCENT and
+    // an empty one keeps an ACCENT outline, which keeps the rating a primary
+    // looking control even when nothing is rated yet.
+    let padding = ui.spacing().button_padding;
+    let spacing = ui.spacing().item_spacing;
+    ui.spacing_mut().button_padding = Vec2::new(2., padding.y);
+    ui.spacing_mut().item_spacing.x = 2.;
     for r in 1..=5 {
-        if ui
-            .add_enabled(
-                enabled,
-                egui::Button::new(if r <= *rating { "★" } else { "☆" }).frame(false),
-            )
+        let rated = r <= *rating;
+        // The click target is invisible: the star itself carries the state.
+        let response = ui.add_enabled(
+            enabled,
+            egui::Button::new("")
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::NONE)
+                .frame_when_inactive(false)
+                .min_size(Vec2::splat(24.)),
+        );
+        let rect = response.rect;
+        let color = if rated {
+            theme::star()
+        } else if response.hovered() {
+            theme::text_secondary()
+        } else {
+            theme::text_muted()
+        };
+        draw_star(&ui.painter_at(rect), rect.center(), 9., rated, color);
+        if response
             .on_hover_text(format!("{r} 星（{r}），再次点击清星"))
             .clicked()
         {
             *rating = if r == *rating { 0 } else { r };
         }
     }
-    if ui
-        .add_enabled(enabled, egui::Button::new("0").small())
-        .on_hover_text("清除星级（0）")
-        .clicked()
-    {
-        *rating = 0;
+    ui.spacing_mut().button_padding = padding;
+    ui.spacing_mut().item_spacing = spacing;
+    // The readout stands clear of the stars instead of touching the last one.
+    ui.add_space(6.);
+    // The readout keeps the unit while it fits; a narrow toolbar drops it
+    // rather than pushing the number past the edge of the window.
+    let room = ui.available_width();
+    let readout = if room >= 24. {
+        format!("{rating} 星")
+    } else if room >= 10. {
+        format!("{rating}")
+    } else {
+        String::new()
+    };
+    if !readout.is_empty() {
+        ui.label(
+            egui::RichText::new(readout)
+                .size(theme::FS_SMALL)
+                .color(theme::text_secondary()),
+        );
     }
     *rating != before
 }
@@ -2945,19 +3467,19 @@ fn close_confirmation(
         .show(ctx, |ui| {
             ui.set_width(440_f32.min((ctx.content_rect().width() - 88.).max(240.)));
             ui.spacing_mut().item_spacing = Vec2::new(12., 10.);
-            ui.label(egui::RichText::new("关闭选片器").size(24.).strong());
+            ui.label(egui::RichText::new("关闭选片器").size(theme::FS_DISPLAY).strong());
             ui.add_space(4.);
             ui.label(egui::RichText::new(if !session {
                 "星级、旗标、颜色、曝光、裁切与旋转已保存到照片元数据。"
             } else if organizing {
                 "是否同步本次修改及文件整理计划到 Lightroom？"
-            } else { "退出后自动同步本次全部修改到 Lightroom。" }).size(18.));
+            } else { "退出后自动同步本次全部修改到 Lightroom。" }).size(theme::FS_TITLE));
             ui.label(
                 egui::RichText::new(if !session { "关闭后修改仍会保留。\n在其他软件中查看时，请刷新或重新读取照片元数据。" }
                     else if organizing { "同步星级、旗标、颜色、曝光、裁切与旋转，并建立待整理分组。\n实际移动请在 LR 文件夹面板完成，保留原照片记录。" }
                     else { "包含星级、旗标、颜色、曝光、裁切与旋转。\n只同步本次修改的字段，保留其他 LR 显影设置。" })
-                    .size(14.)
-                    .color(crate::appearance::palette(ctx).muted),
+                    .size(theme::FS_LABEL)
+                    .color(theme::text_secondary()),
             );
             ui.add_space(10.);
             ui.horizontal_wrapped(|ui| {
@@ -2967,7 +3489,7 @@ fn close_confirmation(
                     ("取消", CloseChoice::Cancel, 88., true),
                 ] {
                     if matches!(action, CloseChoice::Sync) && !session { continue; }
-                    let button = egui::Button::new(egui::RichText::new(text).size(16.))
+                    let button = egui::Button::new(egui::RichText::new(text).size(theme::FS_BODY))
                         .min_size(Vec2::new(width, 40.));
                     if ui.add_enabled(enabled, button).clicked() {
                         choice = Some(action);
@@ -2975,7 +3497,7 @@ fn close_confirmation(
                 }
             });
             if let Some(e) = error {
-                ui.colored_label(RED, egui::RichText::new(e).size(14.));
+                ui.colored_label(theme::danger(), egui::RichText::new(e).size(theme::FS_LABEL));
             }
         });
     choice
@@ -3042,6 +3564,7 @@ impl eframe::App for App {
     }
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         crate::appearance::sync_native_theme(ctx);
+        theme::refresh(ctx);
         self.folder_editor.drop_cursor = None;
         if ctx.input(|i| i.viewport().close_requested())
             && !self.allow_close
@@ -3121,7 +3644,15 @@ impl eframe::App for App {
             if ctx.input(|i| i.viewport().close_requested()) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(crate::appearance::palette(ctx).canvas)).show(ctx, |ui| {
+            egui::CentralPanel::default()
+            // No inner margin: the canvas gradient has to reach the window
+            // edge, otherwise a flat ring of frame colour shows around it.
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::canvas())
+                    .inner_margin(egui::Margin::ZERO),
+            )
+            .show(ctx, |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.label("RAW 编辑中 · 请在独立编辑窗口完成操作\n关闭编辑窗口时自动保存 XMP，之后恢复选片器");
                 });
@@ -3145,16 +3676,20 @@ impl eframe::App for App {
         if self.filter_dirty {
             self.refilter();
         }
+        // The window is a set of bands, not a pile of cards: the rail and the
+        // sidebar are recessed, the title bar, the toolbar and the filmstrip
+        // are raised, and the canvas between them is the darkest surface in
+        // the window. The depth of the interface is carried by that value
+        // ladder, not by a shadow under every rectangle.
         egui::SidePanel::left("activity-rail")
-            .exact_width(68.)
+            .exact_width(64.)
             .resizable(false)
             .frame(
                 egui::Frame::new()
-                    .fill(crate::appearance::palette(ctx).rail)
-                    .inner_margin(6.),
+                    .fill(theme::band())
+                    .inner_margin(egui::Margin { left: 8, right: 0, top: 10, bottom: 0 }),
             )
             .show(ctx, |ui| {
-                ui.add_space(8.);
                 if navigation_button(
                     ui,
                     "文件夹",
@@ -3169,7 +3704,7 @@ impl eframe::App for App {
                         self.filter_editor.open = false;
                     }
                 }
-                ui.add_space(6.);
+                ui.add_space(4.);
                 if navigation_button(ui, "筛选", self.filter_editor.open, NavigationIcon::Filter)
                     .on_hover_text("照片筛选 · Ctrl/Cmd+F")
                     .clicked()
@@ -3179,7 +3714,7 @@ impl eframe::App for App {
                         self.folder_editor.open = false;
                     }
                 }
-                ui.add_space(6.);
+                ui.add_space(4.);
                 let crop_enabled = !self.visible.is_empty()
                     && self.photos[self.current].loaded
                     && self.photos[self.current].metadata_error.is_none()
@@ -3195,10 +3730,20 @@ impl eframe::App for App {
                     self.begin_crop();
                 }
                 if self.filters.active() {
-                    ui.add_space(8.);
-                    ui.colored_label(crate::appearance::palette(ctx).accent, "已筛选");
+                    ui.add_space(10.);
+                    // A pill rather than a floating line of coloured text.
+                    let (rect, _) =
+                        ui.allocate_exact_size(Vec2::new(44., 20.), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 10., theme::accent_soft());
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "已筛选",
+                        theme::font(theme::FS_CAPTION),
+                        theme::accent(),
+                    );
                 }
-                ui.add_space(6.);
+                ui.add_space(4.);
                 let raw_enabled =
                     crop_enabled && crate::raw_editor::supported(&self.paths[self.current]);
                 if ui
@@ -3227,59 +3772,118 @@ impl eframe::App for App {
                         .align(egui::RectAlign::RIGHT_END)
                         .show(|ui| self.settings.menu(ui));
                 });
+                // The rail ends in a hairline: the panels beside it are made
+                // of another material.
+                let rect = ui.max_rect();
+                ui.painter().vline(
+                    rect.right() - 0.5,
+                    rect.y_range(),
+                    Stroke::new(1., theme::line()),
+                );
             });
         egui::TopBottomPanel::top("hud")
+            .min_height(50.)
             .frame(
                 egui::Frame::new()
-                    .fill(crate::appearance::palette(ctx).panel)
-                    .inner_margin(egui::Margin::symmetric(16, 10)),
+                    .fill(theme::raised())
+                    .inner_margin(egui::Margin::ZERO),
             )
             .show(ctx, |ui| {
+                ui.add_space(9.);
+                let width = ui.available_width();
+                let row = 32.;
                 ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("FastCull").strong().size(16.));
-                            ui.label(
-                                egui::RichText::new("/  选片工作台")
-                                    .color(crate::appearance::palette(ctx).muted)
-                                    .size(12.),
-                            );
-                        });
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} / {} 张  ·  全部 {} 张",
-                                self.visible
-                                    .iter()
-                                    .position(|i| *i == self.current)
-                                    .map_or(0, |i| i + 1),
-                                self.visible.len(),
-                                self.paths.len()
-                            ))
-                            .size(12.)
-                            .color(crate::appearance::palette(ctx).muted),
-                        );
-                    });
-                    ui.add_space(12.);
-                    ui.separator();
-                    let reserved = if self.session.is_none() { 90. } else { 0. };
-                    let width = (ui.available_width() - reserved).max(20.);
+                    ui.spacing_mut().item_spacing.x = 0.;
+                    // Left: a new window, and where this photo sits in the set.
                     ui.allocate_ui_with_layout(
-                        Vec2::new(width, 44.),
-                        egui::Layout::top_down(egui::Align::LEFT),
+                        Vec2::new(width * 0.26, row),
+                        egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
-                            if !self.visible.is_empty() {
-                                let name = self.paths[self.current]
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy();
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(name.as_ref()).size(16.).strong(),
-                                    )
-                                    .truncate(),
-                                )
-                                .on_hover_text(self.paths[self.current].display().to_string());
-                                if let Some(info) = &self.photos[self.current].info {
+                            if self.session.is_none()
+                                && ui
+                                    .add(theme::ghost("＋ 新窗口"))
+                                    .on_hover_text("打开另一批照片或文件夹")
+                                    .clicked()
+                            {
+                                match std::env::current_exe().and_then(|exe| {
+                                    std::process::Command::new(exe)
+                                        .stdin(std::process::Stdio::null())
+                                        .stdout(std::process::Stdio::null())
+                                        .stderr(std::process::Stdio::null())
+                                        .spawn()
+                                }) {
+                                    Ok(_) => {}
+                                    Err(e) => self.error = Some(format!("打开新窗口失败：{e}")),
+                                }
+                            }
+                            let index = self
+                                .visible
+                                .iter()
+                                .position(|i| *i == self.current)
+                                .map_or(0, |i| i + 1);
+                            let visible = self.visible.len();
+                            let total = self.paths.len();
+                            ui.label(
+                                egui::RichText::new(format!("{index}"))
+                                    .size(theme::FS_LABEL)
+                                    .strong()
+                                    .color(theme::accent()),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("/ {visible}"))
+                                    .size(theme::FS_SMALL)
+                                    .color(theme::text_muted()),
+                            );
+                            if visible != total {
+                                ui.label(
+                                    egui::RichText::new(format!("共 {total} 张"))
+                                        .size(theme::FS_CAPTION)
+                                        .color(theme::text_muted()),
+                                );
+                            }
+                        },
+                    );
+                    // Centre: the file name. The bar is about the photo, so
+                    // the name is centred in the window and is the largest
+                    // type in the interface.
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::new(width * 0.48, row), egui::Sense::hover());
+                    if !self.visible.is_empty() {
+                        let name = self.paths[self.current]
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        let name = fit_to_width(
+                            ui.painter(),
+                            &name,
+                            &theme::font(theme::FS_HERO),
+                            theme::text(),
+                            rect.width(),
+                        );
+                        let galley =
+                            ui.painter()
+                                .layout_no_wrap(name, theme::font(theme::FS_HERO), theme::text());
+                        let size = galley.size();
+                        ui.painter().galley(
+                            rect.center() - size / 2. - Vec2::new(0., size.y * 0.06),
+                            galley,
+                            theme::text(),
+                        );
+                        let _ = response
+                            .on_hover_text(self.paths[self.current].display().to_string());
+                    }
+                    // Right: the capture summary. The camera, lens and capture
+                    // time stay in the tooltip.
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(width * 0.26, row),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if self.visible.is_empty() {
+                                return;
+                            }
+                            let (summary, hint) = match &self.photos[self.current].info {
+                                Some(info) => {
                                     let capture = &info.capture;
                                     let mut details = Vec::new();
                                     if let Some(iso) = capture.iso {
@@ -3290,68 +3894,59 @@ impl eframe::App for App {
                                     }
                                     if let Some(shutter) = capture.shutter.filter(|v| *v > 0.) {
                                         details.push(if shutter < 1. {
-                                            format!("1/{:.0} s", 1. / shutter)
+                                            format!("1/{:.0}s", 1. / shutter)
                                         } else {
-                                            format!("{shutter:.1} s")
+                                            format!("{shutter:.1}s")
                                         });
                                     }
                                     if let Some(focal) = capture.focal {
-                                        details.push(format!("{focal:.0} mm"));
+                                        details.push(format!("{focal:.0}mm"));
                                     }
                                     let summary = if details.is_empty() {
                                         "未记录拍摄参数".to_owned()
                                     } else {
-                                        details.join("  ·  ")
+                                        details.join(" · ")
                                     };
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(summary)
-                                                .size(12.)
-                                                .color(crate::appearance::palette(ctx).muted),
-                                        )
-                                        .truncate(),
+                                    (
+                                        summary,
+                                        format!(
+                                            "{}\n{}\n{}",
+                                            capture.camera.as_deref().unwrap_or(""),
+                                            capture.lens.as_deref().unwrap_or(""),
+                                            capture.captured_at.as_deref().unwrap_or("")
+                                        ),
                                     )
-                                    .on_hover_text(format!(
-                                        "{}\n{}\n{}",
-                                        capture.camera.as_deref().unwrap_or(""),
-                                        capture.lens.as_deref().unwrap_or(""),
-                                        capture.captured_at.as_deref().unwrap_or("")
-                                    ));
-                                } else {
-                                    ui.weak("正在读取拍摄信息…");
                                 }
-                            }
+                                None => ("正在读取拍摄信息…".to_owned(), String::new()),
+                            };
+                            let summary = fit_to_width(
+                                ui.painter(),
+                                &summary,
+                                &theme::font(theme::FS_SMALL),
+                                theme::text_secondary(),
+                                ui.available_width() - 8.,
+                            );
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(summary)
+                                        .size(theme::FS_SMALL)
+                                        .color(theme::text_secondary()),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(hint);
                         },
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.session.is_none()
-                            && ui
-                                .button("新窗口")
-                                .on_hover_text("打开另一批照片或文件夹")
-                                .clicked()
-                        {
-                            match std::env::current_exe().and_then(|exe| {
-                                std::process::Command::new(exe)
-                                    .stdin(std::process::Stdio::null())
-                                    .stdout(std::process::Stdio::null())
-                                    .stderr(std::process::Stdio::null())
-                                    .spawn()
-                            }) {
-                                Ok(_) => {}
-                                Err(e) => self.error = Some(format!("打开新窗口失败：{e}")),
-                            }
-                        }
-                    });
                 });
                 if let Some(e) = &self.error {
-                    ui.colored_label(RED, e);
+                    ui.colored_label(theme::danger(), e);
                 }
                 if self.close_after_moves {
                     ui.label("正在完成移动，完成后自动关闭选片器");
                 }
                 if let Some(e) = &self.photos[self.current].metadata_error {
                     ui.colored_label(
-                        RED,
+                        theme::danger(),
                         format!(
                             "元数据读取/初始化失败，当前图片仍可浏览；评分暂不可用。按 R 重试：{e}"
                         ),
@@ -3362,13 +3957,21 @@ impl eframe::App for App {
                     let done = stats.wrote + stats.kept + stats.error;
                     if stats.error > 0 {
                         ui.colored_label(
-                            RED,
+                            theme::danger(),
                             format!("{} 张照片未能读入 LR 评分，详情见日志", stats.error),
                         );
                     } else if done < session.len() {
                         ui.label(format!("后台读取 LR 评分：{done}/{}", session.len()));
                     }
                 }
+                // The bar ends in a hairline: the canvas below it is made of
+                // another material.
+                let rect = ui.max_rect();
+                ui.painter().hline(
+                    rect.x_range(),
+                    rect.bottom() - 0.5,
+                    Stroke::new(1., theme::line()),
+                );
             });
         if self.filter_editor.open || self.folder_editor.open {
             if self.filter_editor.open {
@@ -3385,40 +3988,98 @@ impl eframe::App for App {
                     indexed: p.capture_indexed || p.info.is_some(),
                 })
                 .collect();
+            // A narrow window cannot spare 260 px for the sidebar: at 640 px
+            // it took 40% of the width and squeezed the canvas into two thin
+            // grid columns.
+            let narrow = ctx.content_rect().width() < 780.;
+            // The status bar reads the set as it is now, before the panel is
+            // laid out: the filters are applied after the panels close.
+            let status = SidebarStatus {
+                shown: self.visible.len(),
+                total: self.paths.len(),
+                picks: self
+                    .visible
+                    .iter()
+                    .filter(|i| self.photos[**i].values.flag.as_deref() == Some("pick"))
+                    .count(),
+                rejects: self
+                    .visible
+                    .iter()
+                    .filter(|i| self.photos[**i].values.flag.as_deref() == Some("reject"))
+                    .count(),
+                rated: self
+                    .visible
+                    .iter()
+                    .filter(|i| self.photos[**i].values.rating.unwrap_or(0) > 0)
+                    .count(),
+            };
+            let can_reset = self.filters.active();
             egui::SidePanel::left("filters")
-                .default_width(260.)
-                .width_range(220.0..=360.0)
+                .default_width(if narrow { 208. } else { 272. })
+                .width_range(if narrow { 190.0..=260.0 } else { 230.0..=360.0 })
                 .frame(
                     egui::Frame::new()
-                        .fill(crate::appearance::palette(ctx).panel)
-                        .inner_margin(12.),
+                        .fill(theme::band())
+                        .inner_margin(egui::Margin { left: 16, right: 0, top: 14, bottom: 0 }),
                 )
                 .show(ctx, |ui| {
-                    if self.folder_editor.open {
-                        let height = if self.filter_editor.open {
-                            ui.available_height() * 0.35
-                        } else {
-                            ui.available_height() - 220.
-                        };
-                        if self
-                            .folder_editor
-                            .show(ui, self.current, &self.visible, height)
-                        {
-                            self.filter_dirty = true;
+                    // The panel is split in two: the filter tree takes the room
+                    // it needs, and a status bar sits on the floor of the
+                    // panel. The space under the last facet used to be blank;
+                    // it now says what the current selection holds.
+                    let full = ui.max_rect();
+                    let footer = Rect::from_min_max(
+                        Pos2::new(full.left(), full.bottom() - SIDEBAR_FOOTER),
+                        Pos2::new(full.right() - 16., full.bottom()),
+                    );
+                    let body = Rect::from_min_max(
+                        full.left_top(),
+                        Pos2::new(full.right() - 16., footer.top() - 10.),
+                    );
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+                        if self.folder_editor.open {
+                            let height = if self.filter_editor.open {
+                                ui.available_height() * 0.35
+                            } else {
+                                ui.available_height() - 220.
+                            };
+                            if self
+                                .folder_editor
+                                .show(ui, self.current, &self.visible, height)
+                            {
+                                self.filter_dirty = true;
+                            }
+                            if self.filter_editor.open {
+                                ui.separator();
+                            }
                         }
                         if self.filter_editor.open {
-                            ui.separator();
+                            egui::ScrollArea::vertical()
+                                .id_salt("metadata-filters")
+                                .show(ui, |ui| {
+                                    if self.filter_editor.show(ui, &mut self.filters, &rows) {
+                                        self.filter_dirty = true;
+                                    }
+                                });
                         }
+                    });
+                    let reset = ui
+                        .scope_builder(egui::UiBuilder::new().max_rect(footer), |ui| {
+                            sidebar_status(ui, status, can_reset)
+                        })
+                        .inner;
+                    if reset {
+                        self.filter_editor.clear(&mut self.filters);
+                        self.filter_dirty = true;
                     }
-                    if self.filter_editor.open {
-                        egui::ScrollArea::vertical()
-                            .id_salt("metadata-filters")
-                            .show(ui, |ui| {
-                                if self.filter_editor.show(ui, &mut self.filters, &rows) {
-                                    self.filter_dirty = true;
-                                }
-                            });
-                    }
+                    // The panel ends in a hairline: the canvas beside it is
+                    // made of another material.
+                    let rect = ui.max_rect();
+                    ui.painter().vline(
+                        rect.right() - 0.5,
+                        rect.y_range(),
+                        Stroke::new(1., theme::line()),
+                    );
                 });
         }
         if self.filter_dirty {
@@ -3428,18 +4089,29 @@ impl eframe::App for App {
         egui::TopBottomPanel::bottom("toolbar")
             .frame(
                 egui::Frame::new()
-                    .fill(crate::appearance::palette(ctx).panel)
-                    .inner_margin(egui::Margin::symmetric(10, 7)),
+                    .fill(theme::raised())
+                    .inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 8 }),
             )
-            .show(ctx, |ui| self.toolbar(ui));
+            .show(ctx, |ui| {
+                ui.add_space(9.);
+                self.toolbar(ui);
+                ui.add_space(9.);
+                // The toolbar begins in a hairline: it is a shelf of its own.
+                let rect = ui.max_rect();
+                ui.painter().hline(
+                    rect.x_range(),
+                    rect.top() + 0.5,
+                    Stroke::new(1., theme::line()),
+                );
+            });
         if self.filter_dirty {
             self.refilter();
         }
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(crate::appearance::palette(ctx).canvas)
-                    .inner_margin(4.),
+                    .fill(Color32::TRANSPARENT)
+                    .inner_margin(egui::Margin::ZERO),
             )
             .show(ctx, |ui| self.central(ui, ctx));
         if let Some(e) = self.exposure_preview.as_ref().and_then(|p| p.error()) {
@@ -3531,27 +4203,6 @@ impl eframe::App for App {
         self.smoke(ctx);
     }
 }
-fn paint_image(
-    painter: &egui::Painter,
-    t: &TextureHandle,
-    area: Rect,
-    orientation: u16,
-    crop: Option<fastcull::crop::Crop>,
-    native_size: Option<Vec2>,
-) -> Rect {
-    paint_adjusted(
-        painter,
-        t,
-        area,
-        orientation,
-        0.,
-        Vec2::ZERO,
-        1.,
-        native_size,
-        None,
-        crop,
-    )
-}
 fn preview_edge(size: Vec2, pixels_per_point: f32) -> u32 {
     // Keep 25% headroom over physical display pixels, with stable buckets so
     // resizing does not schedule a new decode for every single pixel change.
@@ -3559,40 +4210,268 @@ fn preview_edge(size: Vec2, pixels_per_point: f32) -> u32 {
     ((pixels / 256.).ceil() as u32 * 256).clamp(1024, 4096)
 }
 #[allow(clippy::too_many_arguments)]
-fn paint_adjusted(
-    painter: &egui::Painter,
+/// Where a photo ends up on the canvas.
+///
+/// `rect` is the photo's screen rectangle and `uvs` the texture corners that
+/// belong to it, in the order the mesh expects them. The layout maths is the
+/// one the app has always used: only the area the photo is fitted into
+/// changed, so zoom, pan and the focus overlay keep their coordinates.
+struct PhotoLayout {
+    rect: Rect,
+    uvs: [Pos2; 4],
+}
+
+/// The view state a photo is drawn with.
+///
+/// The zoom factor, the pan offset and the pixel ratio they are measured in
+/// always travel together, so they travel as one value.
+#[derive(Clone, Copy)]
+struct PhotoView {
+    /// The zoom factor; 0 means "fit".
+    zoom: f32,
+    /// The pan offset, in photo pixels.
+    pan: Vec2,
+    /// Pixels per point.
+    ppp: f32,
+}
+
+fn photo_layout(
     t: &TextureHandle,
     area: Rect,
     orientation: u16,
-    zoom: f32,
-    pan: Vec2,
-    ppp: f32,
+    view: PhotoView,
     native_size: Option<Vec2>,
-    preview: Option<(Arc<crate::exposure_preview::Preview>, f32)>,
     crop: Option<fastcull::crop::Crop>,
-) -> Rect {
+) -> PhotoLayout {
     let original = native_size.unwrap_or_else(|| t.size_vec2());
     let crop = crop.unwrap_or_default();
     let size = crop.geometry(original, orientation).rect.size();
-    let scale = if zoom > 0. {
-        zoom / ppp
+    let scale = if view.zoom > 0. {
+        view.zoom / view.ppp
     } else {
         (area.width() / size.x).min(area.height() / size.y)
     };
     let extent = (size * scale - area.size()).max(Vec2::ZERO) * 0.5;
     let pan = Vec2::new(
-        pan.x.clamp(-extent.x, extent.x),
-        pan.y.clamp(-extent.y, extent.y),
+        view.pan.x.clamp(-extent.x, extent.x),
+        view.pan.y.clamp(-extent.y, extent.y),
     );
     let rect = Rect::from_center_size(area.center() + pan, size * scale);
     let source = crop.raw_uvs(original);
     let uvs = fastcull::crop::order(orientation).map(|i| source[i]);
-    paint_uv(painter, t, rect, uvs);
-    if let Some((preview, delta)) = preview {
-        preview.paint(painter, area, rect, t.id(), uvs, delta);
-    }
-    rect
+    PhotoLayout { rect, uvs }
 }
+
+/// Paint a laid out photo.
+///
+/// `canvas` is the area the GPU exposure preview is clipped to. It is the
+/// whole canvas, not the padded area the photo was fitted into, so a photo
+/// that reaches past the padding is still previewed over its whole area.
+fn paint_photo(
+    painter: &egui::Painter,
+    t: &TextureHandle,
+    canvas: Rect,
+    layout: &PhotoLayout,
+    preview: Option<(Arc<crate::exposure_preview::Preview>, f32)>,
+) {
+    paint_uv(painter, t, layout.rect, layout.uvs);
+    if let Some((preview, delta)) = preview {
+        preview.paint(painter, canvas, layout.rect, t.id(), layout.uvs, delta);
+    }
+}
+
+/// The soft shadow below a photo. It has to be painted before the photo.
+fn paint_photo_shadow(painter: &egui::Painter, screen: Rect) {
+    let radius = theme::radius(theme::RADIUS_PHOTO);
+    // Two layers: a wide ambient shadow that lifts the photo off the canvas
+    // and a tight contact shadow that anchors it. One flat shadow read as a
+    // grey outline instead of depth.
+    let ambient = egui::epaint::Shadow {
+        offset: [0, 10],
+        blur: 36,
+        spread: 0,
+        color: theme::shadow_ambient(),
+    };
+    painter.add(ambient.as_shape(screen, radius));
+    let contact = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 9,
+        spread: 0,
+        color: theme::shadow_contact(),
+    };
+    painter.add(contact.as_shape(screen, radius));
+}
+
+/// The pool of light the photo stands in.
+///
+/// The canvas is the darkest surface in the window. A soft halo behind the
+/// picture lifts it off that surface without drawing a frame around it.
+fn paint_photo_glow(painter: &egui::Painter, screen: Rect) {
+    let radius = theme::radius(theme::RADIUS_PHOTO);
+    painter.add(
+        egui::epaint::Shadow {
+            offset: [0, 0],
+            blur: 80,
+            spread: 26,
+            color: theme::photo_glow(),
+        }
+        .as_shape(screen, radius),
+    );
+}
+
+/// The canvas colour at a given height, matching `paint_canvas`.
+fn canvas_color_at(rect: Rect, y: f32) -> Color32 {
+    let t = if rect.height() > 0. {
+        ((y - rect.top()) / rect.height()).clamp(0., 1.)
+    } else {
+        0.
+    };
+    theme::canvas_top().lerp_to_gamma(theme::canvas_bottom(), t)
+}
+
+/// Paint the photo canvas.
+///
+/// A flat fill made the photo look pasted onto a panel. A slow vertical
+/// gradient gives the canvas a direction and lets the photo's shadow read.
+fn paint_canvas(painter: &egui::Painter, rect: Rect) {
+    let steps = 20;
+    let height = rect.height() / steps as f32;
+    for i in 0..steps {
+        let t = i as f32 / (steps - 1) as f32;
+        let top = rect.top() + height * i as f32;
+        painter.rect_filled(
+            Rect::from_min_max(
+                Pos2::new(rect.left(), top),
+                Pos2::new(rect.right(), top + height + 1.),
+            ),
+            0.,
+            theme::canvas_top().lerp_to_gamma(theme::canvas_bottom(), t),
+        );
+    }
+}
+
+/// Round the photo's corners and give it a hairline border.
+///
+/// egui cannot clip a textured mesh to a rounded rectangle: the photo is a
+/// quad with its own texture corners (crop and orientation), so the corners
+/// are painted over with the canvas colour and the border follows the same
+/// radius. A corner is only rounded while it is fully inside the canvas.
+fn paint_photo_edge(painter: &egui::Painter, canvas: Rect, screen: Rect) {
+    // A photo that runs past the canvas edge keeps its square corners there:
+    // rounding them would cut the picture off against the window edge.
+    let radius = theme::RADIUS_PHOTO
+        .min(screen.width() * 0.5)
+        .min(screen.height() * 0.5);
+    round_image_corners(painter, screen, radius, &|corner, ex, ey| {
+        let square = Rect::from_min_size(
+            corner + Vec2::new(ex.x.min(0.) * radius, ey.y.min(0.) * radius),
+            Vec2::splat(radius),
+        );
+        canvas
+            .contains_rect(square)
+            .then(|| canvas_color_at(canvas, corner.y))
+    });
+}
+
+/// Round the corners of a painted image and give it a hairline border.
+///
+/// egui cannot clip a textured mesh to a rounded rectangle: the corners are
+/// painted over with the colour that sits behind the image. `background` is
+/// asked for that colour at each corner and may decline, which leaves the
+/// corner square.
+fn round_image_corners(
+    painter: &egui::Painter,
+    screen: Rect,
+    radius: f32,
+    background: &dyn Fn(Pos2, Vec2, Vec2) -> Option<Color32>,
+) {
+    let radius = radius.min(screen.width() * 0.5).min(screen.height() * 0.5);
+    if radius < 1. {
+        return;
+    }
+    for (corner, ex, ey) in [
+        (screen.left_top(), Vec2::new(1., 0.), Vec2::new(0., 1.)),
+        (screen.right_top(), Vec2::new(-1., 0.), Vec2::new(0., 1.)),
+        (
+            screen.right_bottom(),
+            Vec2::new(-1., 0.),
+            Vec2::new(0., -1.),
+        ),
+        (screen.left_bottom(), Vec2::new(1., 0.), Vec2::new(0., -1.)),
+    ] {
+        let Some(color) = background(corner, ex, ey) else {
+            continue;
+        };
+        let mut points = vec![corner];
+        for step in 0..=8 {
+            let angle =
+                -std::f32::consts::FRAC_PI_2 - (step as f32 / 8.) * std::f32::consts::FRAC_PI_2;
+            let local = Vec2::new(radius + radius * angle.cos(), radius + radius * angle.sin());
+            points.push(corner + local.x * ex + local.y * ey);
+        }
+        if signed_area(&points) < 0. {
+            // Keep the corner first: the fill fans out from it.
+            points[1..].reverse();
+        }
+        painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+    }
+    painter.rect_stroke(
+        screen,
+        theme::radius(radius),
+        Stroke::new(1., theme::photo_rim()),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// Signed area of a polygon, positive when the points run clockwise.
+fn signed_area(points: &[Pos2]) -> f32 {
+    let mut area = 0.;
+    for i in 0..points.len() {
+        let p = points[i];
+        let q = points[(i + 1) % points.len()];
+        area += p.x * q.y - q.x * p.y;
+    }
+    area
+}
+
+/// Trim a label to the width it may use, so a long summary cannot push the
+/// file name out of the top bar.
+fn fit_to_width(
+    painter: &egui::Painter,
+    text: &str,
+    font: &egui::FontId,
+    color: Color32,
+    max: f32,
+) -> String {
+    if max <= 0. {
+        return String::new();
+    }
+    if painter
+        .layout_no_wrap(text.to_owned(), font.clone(), color)
+        .size()
+        .x
+        <= max
+    {
+        return text.to_owned();
+    }
+    let mut out = text.to_owned();
+    while !out.is_empty() {
+        out.pop();
+        let mut candidate = out.clone();
+        candidate.push('…');
+        if painter
+            .layout_no_wrap(candidate.clone(), font.clone(), color)
+            .size()
+            .x
+            <= max
+        {
+            return candidate;
+        }
+    }
+    String::new()
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_uv(painter: &egui::Painter, t: &TextureHandle, rect: Rect, uvs: [Pos2; 4]) {
     let mut mesh = egui::Mesh::with_texture(t.id());
     for (pos, uv) in fastcull::crop::corners(rect).into_iter().zip(uvs) {
@@ -3626,121 +4505,195 @@ fn navigation_button(
     selected: bool,
     icon: NavigationIcon,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(56., 66.), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(48., 62.), egui::Sense::click());
     let painter = ui.painter();
-    let palette = crate::appearance::palette(ui.ctx());
-    let accent = palette.accent;
-    let color = if selected { accent } else { palette.muted };
-    if selected || response.hovered() {
-        painter.rect_filled(
-            rect.shrink(2.),
-            8.,
-            if selected {
-                palette.selected
-            } else {
-                palette.hover
-            },
-        );
+    let accent = theme::accent();
+    let color = if selected {
+        accent
+    } else {
+        theme::text_secondary()
+    };
+    // The icon sits on a square plate. The selected item fills it, so the
+    // rail reads as a set of buttons rather than four loose glyphs.
+    let plate = Rect::from_center_size(
+        rect.center_top() + Vec2::new(0., 19.),
+        Vec2::splat(36.),
+    );
+    if selected {
+        painter.rect_filled(plate, 10., theme::accent_soft());
+    } else if response.hovered() {
+        painter.rect_filled(plate, 10., theme::surface_2());
     }
     if selected {
+        // The active item is marked in the rail itself: a short accent bar
+        // against the edge of the window. The eye finds it without reading
+        // the labels.
+        let rail = ui.max_rect();
         painter.rect_filled(
-            Rect::from_min_size(rect.left_top() + Vec2::new(0., 12.), Vec2::new(2., 34.)),
-            1.,
+            Rect::from_min_size(
+                Pos2::new(rail.left() - 5., plate.center().y - 11.),
+                Vec2::new(3., 22.),
+            ),
+            2.,
             accent,
         );
     }
-    let origin = rect.center_top() + Vec2::new(-11., 13.);
-    let points = match icon {
-        NavigationIcon::Settings => {
-            let center = origin + Vec2::splat(11.);
-            painter.circle_stroke(center, 4., Stroke::new(1.6, color));
-            (0..=32)
-                .map(|step| {
-                    let angle = std::f32::consts::TAU * step as f32 / 32.;
-                    let radius = if matches!(step % 4, 1 | 2) { 11. } else { 8.5 };
-                    center + Vec2::angled(angle) * radius
-                })
-                .collect()
-        }
-        NavigationIcon::Raw => vec![
-            origin + Vec2::new(0., 22.),
-            origin + Vec2::new(0., 2.),
-            origin + Vec2::new(0., 22.),
-            origin + Vec2::new(22., 22.),
-            origin + Vec2::new(2., 20.),
-            origin + Vec2::new(7., 17.),
-            origin + Vec2::new(13., 7.),
-            origin + Vec2::new(22., 3.),
-        ],
-        NavigationIcon::Filter => vec![
-            origin,
-            origin + Vec2::new(22., 0.),
-            origin + Vec2::new(13., 10.),
-            origin + Vec2::new(13., 19.),
-            origin + Vec2::new(9., 21.),
-            origin + Vec2::new(9., 10.),
-            origin,
-        ],
-        NavigationIcon::Folder => vec![
-            origin + Vec2::new(0., 3.),
-            origin + Vec2::new(8., 3.),
-            origin + Vec2::new(11., 7.),
-            origin + Vec2::new(23., 7.),
-            origin + Vec2::new(23., 21.),
-            origin + Vec2::new(0., 21.),
-            origin + Vec2::new(0., 3.),
-        ],
-        NavigationIcon::Crop => {
-            painter.add(egui::Shape::line(
-                vec![
-                    origin + Vec2::new(0., 5.),
-                    origin + Vec2::new(17., 5.),
-                    origin + Vec2::new(17., 24.),
-                ],
-                Stroke::new(1.6, color),
-            ));
+    let origin = plate.center() - Vec2::new(11., 11.);
+    let stroke = Stroke::new(1.9, color);
+    if let NavigationIcon::Raw = icon {
+        // A framed picture reads as "the photo itself"; the old line chart
+        // looked like a statistics panel.
+        painter.rect_stroke(
+            Rect::from_min_size(origin, Vec2::new(22., 17.)),
+            2.,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        painter.circle_filled(origin + Vec2::new(6., 5.), 2., color);
+        painter.add(egui::Shape::line(
             vec![
-                origin + Vec2::new(5., 0.),
-                origin + Vec2::new(5., 19.),
-                origin + Vec2::new(24., 19.),
-            ]
-        }
-    };
-    painter.add(egui::Shape::line(points, Stroke::new(1.6, color)));
+                origin + Vec2::new(2., 15.),
+                origin + Vec2::new(8., 8.),
+                origin + Vec2::new(12., 12.),
+                origin + Vec2::new(15., 8.),
+                origin + Vec2::new(20., 15.),
+            ],
+            stroke,
+        ));
+    } else {
+        let points = match icon {
+            NavigationIcon::Raw => Vec::new(),
+            NavigationIcon::Settings => {
+                // A gear for the appearance menu: a ring with short teeth.
+                let center = origin + Vec2::splat(11.);
+                painter.circle_stroke(center, 4., Stroke::new(1.6, color));
+                (0..=32)
+                    .map(|step| {
+                        let angle = std::f32::consts::TAU * step as f32 / 32.;
+                        let radius = if matches!(step % 4, 1 | 2) { 11. } else { 8.5 };
+                        center + Vec2::angled(angle) * radius
+                    })
+                    .collect()
+            }
+            NavigationIcon::Filter => vec![
+                origin,
+                origin + Vec2::new(22., 0.),
+                origin + Vec2::new(13., 10.),
+                origin + Vec2::new(13., 19.),
+                origin + Vec2::new(9., 21.),
+                origin + Vec2::new(9., 10.),
+                origin,
+            ],
+            NavigationIcon::Folder => vec![
+                origin + Vec2::new(0., 3.),
+                origin + Vec2::new(8., 3.),
+                origin + Vec2::new(11., 7.),
+                origin + Vec2::new(23., 7.),
+                origin + Vec2::new(23., 21.),
+                origin + Vec2::new(0., 21.),
+                origin + Vec2::new(0., 3.),
+            ],
+            NavigationIcon::Crop => {
+                painter.add(egui::Shape::line(
+                    vec![
+                        origin + Vec2::new(0., 5.),
+                        origin + Vec2::new(17., 5.),
+                        origin + Vec2::new(17., 24.),
+                    ],
+                    stroke,
+                ));
+                vec![
+                    origin + Vec2::new(5., 0.),
+                    origin + Vec2::new(5., 19.),
+                    origin + Vec2::new(24., 19.),
+                ]
+            }
+        };
+        painter.add(egui::Shape::line(points, stroke));
+    }
     painter.text(
-        rect.center_bottom() - Vec2::new(0., 10.),
+        rect.center_bottom() - Vec2::new(0., 9.),
         egui::Align2::CENTER_BOTTOM,
         label,
-        egui::FontId::proportional(12.),
-        color,
+        theme::font(theme::FS_SMALL),
+        if selected { accent } else { theme::text_secondary() },
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
-pub(crate) fn configure(ctx: &egui::Context) {
-    crate::appearance::configure(ctx);
+/// The faces the interface draws with.
+///
+/// The platform's own faces come first, the Chinese one after the Latin one:
+/// they were designed to sit together, and egui's bundled face does not. Any
+/// face that is missing simply leaves the bundled one in place.
+fn font_definitions() -> egui::FontDefinitions {
+    let mut fonts = egui::FontDefinitions::default();
+    if let Some(font) = latin_font() {
+        fonts.font_data.insert("latin".into(), font.clone());
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .insert(0, "latin".into());
+    }
     if let Some(font) = cjk_font() {
-        let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert("cjk".into(), font.clone());
         fonts
             .families
             .get_mut(&egui::FontFamily::Proportional)
             .unwrap()
             .push("cjk".into());
-        ctx.set_fonts(fonts);
     }
+    if let Some(font) = mono_font() {
+        fonts.font_data.insert("mono".into(), font.clone());
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap()
+            .insert(0, "mono".into());
+    }
+    fonts
 }
+
+pub(crate) fn configure(ctx: &egui::Context) {
+    // The upstream appearance module owns the light/dark preference and the
+    // base styles; the redesign layer paints its own materials on top.
+    crate::appearance::configure(ctx);
+    theme::apply(ctx);
+    ctx.set_fonts(font_definitions());
+}
+/// Read the first font that exists among the given paths.
+///
+/// A font that cannot be parsed is skipped rather than fatal: the interface
+/// falls back to egui's bundled face instead of failing to start.
+fn read_font(paths: &[std::path::PathBuf]) -> Option<Arc<egui::FontData>> {
+    paths
+        .iter()
+        .find_map(|path| std::fs::read(path).ok())
+        .map(|bytes| Arc::new(egui::FontData::from_owned(bytes)))
+}
+
+/// The platform's Latin face, used ahead of egui's bundled one.
+fn latin_font() -> &'static Option<Arc<egui::FontData>> {
+    static FONT: std::sync::OnceLock<Option<Arc<egui::FontData>>> = std::sync::OnceLock::new();
+    FONT.get_or_init(|| read_font(&fastcull::platform::latin_font_paths()))
+}
+
+/// The platform's Chinese face.
 fn cjk_font() -> &'static Option<Arc<egui::FontData>> {
     static FONT: std::sync::OnceLock<Option<Arc<egui::FontData>>> = std::sync::OnceLock::new();
-    FONT.get_or_init(|| {
-        fastcull::platform::cjk_font_paths()
-            .iter()
-            .find_map(|path| std::fs::read(path).ok())
-            .map(|bytes| Arc::new(egui::FontData::from_owned(bytes)))
-    })
+    FONT.get_or_init(|| read_font(&fastcull::platform::cjk_font_paths()))
+}
+
+/// The platform's monospaced face, for numbers that have to line up.
+fn mono_font() -> &'static Option<Arc<egui::FontData>> {
+    static FONT: std::sync::OnceLock<Option<Arc<egui::FontData>>> = std::sync::OnceLock::new();
+    FONT.get_or_init(|| read_font(&fastcull::platform::mono_font_paths()))
 }
 fn preload_fonts() {
     // Overlap font I/O with native window and graphics-driver initialization.
+    std::thread::spawn(latin_font);
     std::thread::spawn(cjk_font);
+    std::thread::spawn(mono_font);
 }
 
 // Create the window before filesystem enumeration. The same shell is also the
@@ -3822,6 +4775,7 @@ impl eframe::App for Shell {
     }
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         crate::appearance::sync_native_theme(ctx);
+        theme::refresh(ctx);
         if let Some(app) = &mut self.app {
             app.update(ctx, frame);
             return;
@@ -3866,14 +4820,14 @@ impl eframe::App for Shell {
             });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space((ui.available_height() * 0.23).max(30.));
-                ui.label(egui::RichText::new("让好照片，脱颖而出").size(32.).strong());
-                ui.add_space(14.);
+                ui.add_space((ui.available_height() * 0.30).max(40.));
                 ui.label(
-                    egui::RichText::new("快速浏览、标记与对比，专注每一次选择")
-                        .size(15.)
-                        .color(crate::appearance::palette(ctx).muted),
+                    egui::RichText::new("FastCull")
+                        .size(theme::FS_DISPLAY)
+                        .strong(),
                 );
+                ui.add_space(14.);
+                ui.label(egui::RichText::new("快速浏览，专注选片").size(theme::FS_TITLE));
                 ui.add_space(30.);
                 if self.receiver.is_some() || self.pending.is_some() || self.app.is_some() {
                     ui.spinner();
@@ -3904,7 +4858,7 @@ impl eframe::App for Shell {
                     ui.weak("ARW · CR2 · NEF · DNG · JPG / JPEG");
                     if let Some(error) = &self.error {
                         ui.add_space(16.);
-                        ui.colored_label(RED, error);
+                        ui.colored_label(theme::danger(), error);
                     }
                 }
             });
@@ -4063,6 +5017,73 @@ fn run_session(paths: Vec<PathBuf>, session: Option<Arc<Session>>, bridge: bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_interface_draws_with_the_platform_faces() {
+        // The bundled Latin face and the platform's Chinese face have to
+        // cover both scripts, on every platform the app ships on.
+        let fonts = font_definitions();
+        let proportional = &fonts.families[&egui::FontFamily::Proportional];
+        if fastcull::platform::latin_font_paths()
+            .iter()
+            .any(|path| path.exists())
+        {
+            assert_eq!(
+                proportional.first().map(String::as_str),
+                Some("latin"),
+                "the platform's own face has to come first"
+            );
+        }
+        let ctx = egui::Context::default();
+        ctx.set_fonts(fonts);
+        // The faces are only built on the first frame.
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        let font = egui::FontId::proportional(theme::FS_BODY);
+        assert!(
+            ctx.fonts_mut(|f| f.has_glyphs(&font, "FastCull 0123")),
+            "no Latin glyphs in the configured fonts"
+        );
+        if fastcull::platform::cjk_font_paths()
+            .iter()
+            .any(|path| path.exists())
+        {
+            assert!(
+                ctx.fonts_mut(|f| f.has_glyphs(&font, "照片筛选")),
+                "no Chinese glyphs in the configured fonts"
+            );
+        }
+    }
+
+    #[test]
+    fn focus_overlay_projects_onto_the_padded_photo_rect() {
+        // The photo is fitted into an area with a 12px margin. The focus
+        // overlay has to use the photo's own screen rectangle, so its markers
+        // stay on the photo and do not drift onto the canvas.
+        let ctx = egui::Context::default();
+        let image = egui::ColorImage::new([64, 48], vec![egui::Color32::WHITE; 64 * 48]);
+        let texture = ctx.load_texture("photo", image, egui::TextureOptions::default());
+        let canvas = Rect::from_min_size(egui::pos2(0., 0.), Vec2::new(400., 300.));
+        let padded = canvas.shrink(theme::SP_M);
+        let layout = photo_layout(
+            &texture,
+            padded,
+            1,
+            PhotoView {
+                zoom: 0.,
+                pan: Vec2::ZERO,
+                ppp: 1.,
+            },
+            None,
+            None,
+        );
+        assert!(padded.contains_rect(layout.rect));
+        // The limiting axis keeps the full margin.
+        assert!((canvas.max.y - layout.rect.max.y - theme::SP_M).abs() < 0.001);
+        let point = fastcull::photo_focus::project(egui::pos2(0.25, 0.75), layout.uvs, layout.rect)
+            .expect("focus projection");
+        let expected = layout.rect.min + Vec2::new(0.25, 0.75) * layout.rect.size();
+        assert!((point - expected).length() < 0.001);
+    }
     #[test]
     fn catalog_crop_overrides_stale_xmp_but_never_later_user_edits() {
         let catalog = crate::exposure::Baseline {

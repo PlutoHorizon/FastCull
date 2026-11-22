@@ -1,5 +1,6 @@
 use eframe::egui;
 use fastcull::filtering::{Bounds, Comparison, Field, Filters, Row, time_key};
+use fastcull::theme;
 use std::collections::BTreeMap;
 type CompiledRanges = (Option<u64>, Option<u64>, BTreeMap<Field, Bounds>);
 
@@ -53,19 +54,137 @@ impl Editor {
         };
         *filters = Filters::default();
     }
-    pub fn show(&mut self, ui: &mut egui::Ui, filters: &mut Filters, rows: &[Row<'_>]) -> bool {
+    /// A short summary of what a facet currently filters on.
+    ///
+    /// A collapsed facet gave no clue that it was narrowing the set, so the
+    /// sidebar read as a list of empty headings.
+    fn facet_summary(&self, field: Field, filters: &Filters) -> Option<String> {
+        if field.numeric() {
+            let (min, max) = self.ranges.get(&field)?;
+            let unit = match field {
+                Field::Shutter => "s",
+                Field::Focal => "mm",
+                _ => "",
+            };
+            let min = min.trim();
+            let max = max.trim();
+            return match (min.is_empty(), max.is_empty()) {
+                (true, true) => None,
+                (true, false) => Some(format!("≤ {max}{unit}")),
+                (false, true) => Some(format!("≥ {min}{unit}")),
+                (false, false) => Some(format!("{min}–{max}{unit}")),
+            };
+        }
+        let selected = filters.selected.get(&field)?;
+        let values: Vec<&str> = selected.iter().filter_map(|v| v.as_deref()).collect();
+        if values.is_empty() {
+            return None;
+        }
+        Some(match field {
+            Field::Rating => match values.as_slice() {
+                [only] => match *only {
+                    "0" => "未评级".to_owned(),
+                    stars => format!("{stars} 星"),
+                },
+                many => format!("{} 项", many.len()),
+            },
+            _ => {
+                let text = values.join("、");
+                if text.chars().count() > 10 {
+                    format!("{}…", text.chars().take(9).collect::<String>())
+                } else {
+                    text
+                }
+            }
+        })
+    }
+    /// A compact chip row for the facets a culler sets constantly.
+    ///
+    /// A checkbox list per facet made the sidebar read as a form. Rating,
+    /// flag and colour label are the three that are read and written all the
+    /// time, so they read better as a row of chips that carries its own count.
+    fn quick_chips(
+        &self,
+        ui: &mut egui::Ui,
+        field: Field,
+        filters: &mut Filters,
+        counts: &BTreeMap<Option<String>, usize>,
+    ) -> bool {
         let mut changed = false;
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("照片筛选").size(15.).strong())
-                .on_hover_text("同一组多选：或；不同组之间：且");
-            if ui
-                .add_enabled(filters.active(), egui::Button::new("重置").frame(false))
-                .clicked()
-            {
-                self.clear(filters);
-                changed = true;
+        let mut entries: Vec<(Option<String>, usize)> =
+            counts.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        entries.sort_by_key(|(k, _)| k.clone().unwrap_or_default());
+        if entries.is_empty() {
+            ui.weak("尚无可用信息");
+            return false;
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (key, count) in &entries {
+                let selected = filters
+                    .selected
+                    .get(&field)
+                    .is_some_and(|set| set.contains(key));
+                // The label is short and the count is a quieter second run,
+                // so a chip reads at a glance.
+                let label = chip_label(field, key.as_deref());
+                let mut job = egui::text::LayoutJob::default();
+                egui::RichText::new(label.clone())
+                    .color(theme::text())
+                    .append_to(
+                        &mut job,
+                        ui.style(),
+                        egui::FontSelection::Default,
+                        egui::Align::Center,
+                    );
+                if *count > 0 {
+                    egui::RichText::new(format!(" {count}"))
+                        .size(theme::FS_CAPTION)
+                        .color(theme::text_muted())
+                        .append_to(
+                            &mut job,
+                            ui.style(),
+                            egui::FontSelection::Default,
+                            egui::Align::Center,
+                        );
+                }
+                let text = egui::WidgetText::from(job);
+                let chip = if selected {
+                    theme::secondary_selected_rich(text)
+                } else {
+                    theme::secondary_rich(text)
+                };
+                if ui
+                    .add(chip)
+                    .on_hover_text(format!("{label} · {count} 张"))
+                    .clicked()
+                {
+                    let set = filters.selected.entry(field).or_default();
+                    if selected {
+                        set.remove(key);
+                    } else {
+                        // A single-threshold comparison cannot hold two
+                        // ratings at once.
+                        if field == Field::Rating && filters.comparison != Comparison::Equal {
+                            set.clear();
+                        }
+                        set.insert(key.clone());
+                    }
+                    changed = true;
+                }
             }
         });
+        changed
+    }
+    pub fn show(&mut self, ui: &mut egui::Ui, filters: &mut Filters, rows: &[Row<'_>]) -> bool {
+        let mut changed = false;
+        // The reset action lives in the status bar at the foot of the panel,
+        // next to the numbers it would undo. The header only names the panel.
+        ui.label(
+            egui::RichText::new("照片筛选")
+                .size(theme::FS_TITLE)
+                .strong(),
+        )
+        .on_hover_text("同一组多选：或；不同组之间：且");
         let indexed = rows.iter().filter(|row| row.indexed).count();
         if indexed < rows.len() {
             ui.weak(format!("读取拍摄信息 {indexed}/{}", rows.len()));
@@ -74,7 +193,7 @@ impl Editor {
         if ui
             .add(
                 egui::TextEdit::singleline(&mut self.query)
-                    .hint_text("搜索文件名…")
+                    .hint_text(theme::placeholder("搜索文件名…"))
                     .id(id("query"))
                     .desired_width(f32::INFINITY),
             )
@@ -89,13 +208,13 @@ impl Editor {
                 .add(
                     egui::TextEdit::singleline(&mut self.from)
                         .id(id("from"))
-                        .hint_text("开始日期"),
+                        .hint_text(theme::placeholder("开始日期")),
                 )
                 .changed()
                 | ui.add(
                     egui::TextEdit::singleline(&mut self.to)
                         .id(id("to"))
-                        .hint_text("结束日期（含当天）"),
+                        .hint_text(theme::placeholder("结束日期（含当天）")),
                 )
                 .changed();
             if edited {
@@ -112,13 +231,44 @@ impl Editor {
             }
         });
         if let Some(error) = &self.error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
+            ui.colored_label(theme::danger(), error);
             ui.label("输入无效时保留上一次有效条件");
         }
+        // The summaries are read once, before the loop: the header and the
+        // body both need the filters, and the body needs them mutably.
+        let summaries: BTreeMap<Field, String> = Field::ALL
+            .iter()
+            .filter_map(|field| {
+                self.facet_summary(*field, filters)
+                    .map(|text| (*field, text))
+            })
+            .collect();
         for field in Field::ALL {
             ui.add_space(3.);
-            egui::CollapsingHeader::new(title(field))
-                .default_open(field == Field::Rating)
+            // An active facet says what it filters on, so a collapsed sidebar
+            // still shows which conditions are narrowing the set.
+            let mut header = egui::text::LayoutJob::default();
+            egui::RichText::new(title(field))
+                .color(theme::text())
+                .append_to(
+                    &mut header,
+                    ui.style(),
+                    egui::FontSelection::Default,
+                    egui::Align::Center,
+                );
+            if let Some(text) = summaries.get(&field) {
+                egui::RichText::new(format!("   {text}"))
+                    .size(theme::FS_SMALL)
+                    .color(theme::accent())
+                    .append_to(
+                        &mut header,
+                        ui.style(),
+                        egui::FontSelection::Default,
+                        egui::Align::Center,
+                    );
+            }
+            egui::CollapsingHeader::new(egui::WidgetText::from(header))
+                .default_open(matches!(field, Field::Rating | Field::Flag | Field::Label))
                 .show(ui, |ui| {
                     if changed {
                         self.invalidate();
@@ -173,7 +323,7 @@ impl Editor {
                                 .add(
                                     egui::TextEdit::singleline(&mut range.0)
                                         .id(id(names[0]))
-                                        .hint_text("最小")
+                                        .hint_text(theme::placeholder("最小"))
                                         .desired_width(86.),
                                 )
                                 .changed();
@@ -181,7 +331,7 @@ impl Editor {
                                 .add(
                                     egui::TextEdit::singleline(&mut range.1)
                                         .id(id(names[1]))
-                                        .hint_text("最大")
+                                        .hint_text(theme::placeholder("最大"))
                                         .desired_width(86.),
                                 )
                                 .changed();
@@ -198,6 +348,12 @@ impl Editor {
                                 Err(error) => self.error = Some(error),
                             }
                         }
+                    }
+                    // Rating, flag and colour label are set constantly, so
+                    // they get a chip row. The rest keep the checkbox list.
+                    if matches!(field, Field::Rating | Field::Flag | Field::Label) {
+                        changed |= self.quick_chips(ui, field, filters, &counts);
+                        return;
                     }
                     let mut entries: Vec<_> = counts.into_iter().collect();
                     if field.numeric() {
@@ -318,6 +474,18 @@ fn title(field: Field) -> &'static str {
         Field::Focal => "焦距",
     }
 }
+/// The short label a facet chip carries.
+///
+/// The long form of the rating label does not fit a chip row.
+fn chip_label(field: Field, key: Option<&str>) -> String {
+    if field == Field::Rating {
+        return match key {
+            Some("0") | None => "未评".to_owned(),
+            Some(stars) => format!("{stars}★"),
+        };
+    }
+    value_label(field, key)
+}
 fn value_label(field: Field, key: Option<&str>) -> String {
     let Some(key) = key else {
         return match field {
@@ -388,12 +556,60 @@ mod tests {
                 });
             };
         render(&mut editor, &mut filters, &values);
-        assert_eq!(editor.counts.len(), 1);
+        // Only the three facets that are always open are traversed; the other
+        // eight stay lazy until they are opened.
+        assert_eq!(editor.counts.len(), 3);
+        assert!(editor.counts.contains_key(&Field::Rating));
+        assert!(editor.counts.contains_key(&Field::Flag));
+        assert!(editor.counts.contains_key(&Field::Label));
+        assert!(!editor.counts.contains_key(&Field::Camera));
         assert_eq!(editor.counts[&Field::Rating][&Some("0".into())], 1);
         values.rating = Some(5);
         editor.invalidate();
         render(&mut editor, &mut filters, &values);
         assert_eq!(editor.counts[&Field::Rating][&Some("0".into())], 0);
         assert_eq!(editor.counts[&Field::Rating][&Some("5".into())], 1);
+    }
+
+    #[test]
+    fn facet_summary_names_what_a_collapsed_filter_narrows_on() {
+        let mut editor = Editor::opened();
+        let mut filters = Filters::default();
+        assert!(editor.facet_summary(Field::Rating, &filters).is_none());
+
+        filters
+            .selected
+            .insert(Field::Rating, [Some("3".to_owned())].into());
+        assert_eq!(
+            editor.facet_summary(Field::Rating, &filters).as_deref(),
+            Some("3 星")
+        );
+
+        filters
+            .selected
+            .insert(Field::Camera, [Some("Canon R5".to_owned())].into());
+        assert_eq!(
+            editor.facet_summary(Field::Camera, &filters).as_deref(),
+            Some("Canon R5")
+        );
+
+        filters
+            .selected
+            .insert(Field::Rating, [Some("3".to_owned()), Some("4".to_owned())].into());
+        assert_eq!(
+            editor.facet_summary(Field::Rating, &filters).as_deref(),
+            Some("2 项")
+        );
+
+        editor.ranges.insert(Field::Iso, ("100".into(), "800".into()));
+        assert_eq!(
+            editor.facet_summary(Field::Iso, &filters).as_deref(),
+            Some("100–800")
+        );
+        editor.ranges.insert(Field::Focal, ("".into(), "200".into()));
+        assert_eq!(
+            editor.facet_summary(Field::Focal, &filters).as_deref(),
+            Some("≤ 200mm")
+        );
     }
 }

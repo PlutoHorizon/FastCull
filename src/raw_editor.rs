@@ -2,6 +2,7 @@
 //! explicit, asynchronous and never discarded. Normal culling never starts it.
 use anyhow::{Context, Result, ensure};
 use eframe::egui::{self, Color32, TextureHandle, Vec2};
+use fastcull::theme;
 use fastcull::{
     local_raw, platform,
     xmp::{self, BasicAdjustments, BasicControl, Updates, Values, WhiteBalance},
@@ -167,6 +168,10 @@ enum Job {
     Save(SaveJob),
     Prepare(PrepareJob),
 }
+// The recipe event carries a full revision and a result; the other variants
+// are small. Boxing the large variant is a design decision for the pipeline
+// owner, so the lint is silenced here instead of changing the shape.
+#[allow(clippy::large_enum_variant)]
 enum Event {
     QuickFailed,
     Profiles(Vec<fastcull::raw_profiles::Choice>),
@@ -1090,15 +1095,14 @@ impl Editor {
     fn crop_canvas(&mut self, ui: &mut egui::Ui) {
         let (area, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        ui.painter()
-            .rect_filled(area, 0., crate::appearance::palette(ui.ctx()).canvas);
+        ui.painter().rect_filled(area, 0., theme::canvas());
         if !self.crop_ready {
             ui.painter().text(
                 area.center(),
                 egui::Align2::CENTER_CENTER,
                 "正在加载完整裁切范围…",
-                egui::FontId::proportional(16.),
-                Color32::GRAY,
+                theme::font(theme::FS_TITLE),
+                theme::text_secondary(),
             );
             return;
         }
@@ -1822,12 +1826,15 @@ impl Editor {
             .exact_width(346.)
             .frame(
                 egui::Frame::new()
-                    .fill(crate::appearance::palette(ctx).panel)
+                    .fill(theme::surface_2())
                     .inner_margin(14.),
             )
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(8., 8.);
                 ui.spacing_mut().slider_rail_height = 3.;
+                ui.visuals_mut().widgets.inactive.bg_fill = theme::text_secondary();
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = theme::line();
+                ui.visuals_mut().widgets.hovered.bg_fill = theme::text();
                 egui::TopBottomPanel::bottom("raw-actions")
                     .frame(egui::Frame::new().inner_margin(egui::Margin {
                         top: 10,
@@ -1900,7 +1907,7 @@ impl Editor {
                         let valid = self.updates();
                         self.focus_overlay.control(ui);
                         if let Err(error) = &valid {
-                            ui.colored_label(ui.visuals().error_fg_color, error.to_string());
+                            ui.colored_label(theme::danger(), error.to_string());
                         }
                         if ui
                             .add_enabled(
@@ -1911,8 +1918,8 @@ impl Editor {
                                     && (self.confirmed || self.crop_ready || self.prefetching)
                                     && (!self.rendering || self.prefetching)
                                     && self.changed_at.is_none(),
-                                egui::Button::new(egui::RichText::new("保存调整到 XMP").color(Color32::WHITE))
-                                    .fill(Color32::from_rgb(49, 102, 211))
+                                egui::Button::new("保存调整到 XMP")
+                                    .fill(theme::accent())
                                     .min_size(Vec2::new(ui.available_width(), 32.)),
                             )
                             .clicked()
@@ -2121,7 +2128,7 @@ impl Editor {
                         });
                         if let Some(error) = &self.error {
                             ui.separator();
-                            ui.colored_label(ui.visuals().error_fg_color, error);
+                            ui.colored_label(theme::danger(), error);
                         }
                         ui.add_space(8.);
                         egui::CollapsingHeader::new("显影信息").show(ui, |ui| {
@@ -2131,7 +2138,7 @@ impl Editor {
                                 ui.weak(format!("XMP 配置文件：{profile}"));
                             }
                             if let Some(warning) = &self.color_warning {
-                                ui.colored_label(Color32::from_rgb(220, 185, 110), warning);
+                                ui.colored_label(theme::warning(), warning);
                             }
                             if let Some(version) = &self.original.process_version {
                                 ui.weak(format!("处理版本：{version}"));
@@ -2147,9 +2154,14 @@ impl Editor {
             }
             let (area, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-            ui.painter()
-                .rect_filled(area, 0., crate::appearance::palette(ui.ctx()).canvas);
-            if let Some(texture) = self.texture.clone() {
+            ui.painter().rect_filled(area, 0., theme::canvas());
+            // The plan is computed before the texture is borrowed, so the
+            // display state does not hold an immutable borrow across it.
+            let provenance = self.display_provenance();
+            let settings = self.preview_settings();
+            frame_plan = Some((settings, provenance));
+            self.last_frame_provenance = Some(provenance);
+            if let Some(texture) = &self.texture {
                 let pixels = self
                     .source_size
                     .map(|size| {
@@ -2211,10 +2223,6 @@ impl Editor {
                         Err(error) => self.error = Some(format!("取样失败：{error:#}")),
                     }
                 }
-                let provenance = self.display_provenance();
-                let settings = self.preview_settings();
-                frame_plan = Some((settings, provenance));
-                self.last_frame_provenance = Some(provenance);
                 let display = crate::raw_preview::DisplayState {
                     settings,
                     provenance: Some(provenance),
@@ -2274,8 +2282,8 @@ impl Editor {
                     area.center(),
                     egui::Align2::CENTER_CENTER,
                     "正在后台加载 RAW / XMP…",
-                    egui::FontId::proportional(16.),
-                    Color32::GRAY,
+                    theme::font(theme::FS_TITLE),
+                    theme::text_secondary(),
                 );
             }
         });
@@ -2919,17 +2927,7 @@ fn adjustment_slider(
             let slider = ui
                 .scope(|ui| {
                     ui.spacing_mut().interact_size.y = 22.;
-                    let widgets = &mut ui.visuals_mut().widgets;
-                    for widget in [
-                        &mut widgets.inactive,
-                        &mut widgets.hovered,
-                        &mut widgets.active,
-                    ] {
-                        widget.bg_fill = Color32::TRANSPARENT;
-                        widget.weak_bg_fill = Color32::TRANSPARENT;
-                        widget.fg_stroke = egui::Stroke::NONE;
-                        widget.bg_stroke = egui::Stroke::NONE;
-                    }
+                    theme::bare_slider(ui);
                     ui.add(
                         egui::Slider::new(value, range.clone())
                             .step_by(step)

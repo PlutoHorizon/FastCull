@@ -4,15 +4,9 @@ use objc2::{
     class, msg_send,
     runtime::{AnyObject, Bool},
 };
+use objc2_core_graphics::{CGColorSpace, kCGColorSpaceSRGB};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use std::ffi::c_void;
 
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    static kCGColorSpaceSRGB: *const c_void;
-    fn CGColorSpaceCreateWithName(name: *const c_void) -> *const c_void;
-    fn CGColorSpaceRelease(space: *const c_void);
-}
 pub fn configure(cc: &eframe::CreationContext<'_>) {
     if objc2::MainThreadMarker::new().is_none() {
         return;
@@ -26,17 +20,20 @@ pub fn configure(cc: &eframe::CreationContext<'_>) {
     // SAFETY: CreationContext borrows a live AppKit NSView on its UI thread.
     // CALayer owns its child layers during this synchronous traversal. Only
     // actual CAMetalLayer instances receive setColorspace:. The layer retains
-    // the CGColorSpace; release our create-rule reference after tagging it.
+    // the CGColorSpace; our create-rule reference is released when `space`
+    // drops at the end of this scope.
     unsafe {
         let view = &*handle.ns_view.as_ptr().cast::<AnyObject>();
         let layer: *mut AnyObject = msg_send![view, layer];
-        let space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-        if space.is_null() {
+        // `setColorspace:` expects a `^{CGColorSpace=}` pointer, so the
+        // argument has to carry that exact Objective-C type encoding. Sending
+        // a bare `*const c_void` encodes as `^v`, which the objc2 runtime
+        // rejects in debug builds.
+        let Some(space) = CGColorSpace::with_name(Some(kCGColorSpaceSRGB)) else {
             log::warn!("graphics failed to create sRGB color space");
             return;
-        }
-        let count = layer.as_ref().map_or(0, |layer| tag(layer, space, 0));
-        CGColorSpaceRelease(space);
+        };
+        let count = layer.as_ref().map_or(0, |layer| tag(layer, &space, 0));
         if count > 0 {
             log::info!("graphics colorspace=sRGB metal_layers={count}");
         } else {
@@ -44,7 +41,7 @@ pub fn configure(cc: &eframe::CreationContext<'_>) {
         }
     }
 }
-unsafe fn tag(layer: &AnyObject, space: *const c_void, depth: usize) -> usize {
+unsafe fn tag(layer: &AnyObject, space: &CGColorSpace, depth: usize) -> usize {
     if depth > 8 {
         return 0;
     }
